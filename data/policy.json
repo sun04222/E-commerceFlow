@@ -1,0 +1,96 @@
+{
+  "_file": "policy.json",
+  "_notice": "合成规则 · 非任何真实平台规则 · 仅用于本项目演示与回归门禁",
+
+  "field_contract": {
+    "paid_amount": {
+      "source": "orders",
+      "type": "money",
+      "meaning": "订单实付金额。退款金额的封顶口径。"
+    },
+    "applied_amount": {
+      "source": "refunds",
+      "type": "money",
+      "meaning": "退款申请金额。口径 = 商品应退额 + 可退服务费。"
+    },
+    "refundable_service_fee": {
+      "source": "sku_specs",
+      "type": "money",
+      "meaning": "该 SKU 可退服务费，本项目全部为 0。"
+    },
+    "signed": {
+      "source": "logistics",
+      "type": "bool",
+      "meaning": "物流是否已签收。签收人可能是本人，也可能是代收点/门卫。"
+    },
+    "reason_code": {
+      "source": "refunds",
+      "type": "enum",
+      "meaning": "退款理由码：COLOR_MISMATCH / NOT_RECEIVED / DAMAGED / LOGISTICS_DELAY"
+    }
+  },
+
+  "action_tiers": [
+    {
+      "match": { "read_only": true },
+      "tier": "AUTO",
+      "label": "只读直通",
+      "because": "只读工具不改变任何业务状态，任何模式下都允许。"
+    },
+    {
+      "match": { "money_action": false },
+      "tier": "ASK",
+      "label": "执行前询问",
+      "because": "非资金类但不可逆（换货建单、退货运单一旦生成，客户就要寄回），必须取得一次人工确认。"
+    },
+    {
+      "match": { "money_action": true },
+      "tier": "BY_AMOUNT",
+      "label": "按金额动态分档",
+      "because": "资金类动作按金额参数动态升级审批级别。"
+    }
+  ],
+
+  "amount_tiers": [
+    { "up_to": 100, "tier": "EXECUTE", "label": "直接执行" },
+    { "up_to": 500, "tier": "ASK", "label": "执行前询问" },
+    { "up_to": null, "tier": "APPROVE", "label": "升级人工审批" }
+  ],
+
+  "amount_rules": [
+    {
+      "id": "AR-01",
+      "check": "applied_amount <= paid_amount + refundable_service_fee",
+      "verdict_on_fail": "BLOCK",
+      "because": "退款金额不得超过实付金额与可退服务费之和。"
+    }
+  ],
+
+  "consistency_rules": [
+    {
+      "id": "CR-01",
+      "when": { "reason_code": "NOT_RECEIVED", "logistics_signed": true },
+      "verdict": "BLOCK",
+      "because": "理由为「未收到货」但物流显示已签收，属事实冲突，需先澄清签收真实性再处置。"
+    }
+  ],
+
+  "stage_rules": [
+    {
+      "id": "SR-01",
+      "when": { "case_type": "UNCLEAR" },
+      "forbid": ["investigate", "judge"],
+      "because": "诉求不明时不得进入取证与判责，必须先向客户追问澄清。"
+    }
+  ],
+
+  "_stage_rules_note": "为什么 stage_rules 只有一条：阶段违规在结构上只能「回溯」检出——Reviewer 运行时，investigate / judge 已经发生，而 close / approve 尚未发生。因此 forbid 里写尚未进行的环节永远是死规则；写已进行的环节（如 SR-02 的 forbid: [judge]）则会在证据不齐时必然触发，用不可恢复的硬阻断劫持本该走「驳回 + 补证」回路的 A1。证据完整性与判据留痕因此不走 stage_rules：前者由 Reviewer 的 A1（EV-01，驳回并要求补证，可恢复）承担，后者由 A4（JT-01，无判据不出结论，硬阻断）承担。stage_rules 只保留真正需要硬阻断的 SR-01——它可以用 --violation-demo 负向验证。",
+
+  "ambiguous_detectors": [
+    {
+      "id": "AM-01",
+      "when": { "reason_code": "DAMAGED", "logistics_signer_contains": "代收" },
+      "note": "签收人为代收点 / 门卫，属无确定性标准答案的业务策略型情形 → 仅告警，不阻断，也不得据此强判。"
+    }
+  ]
+}

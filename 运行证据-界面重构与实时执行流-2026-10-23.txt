@@ -1,0 +1,205 @@
+运行证据 · 界面重构与实时执行流 · 2026-10-23
+================================================================
+本文件是原始回执，不是转述：每条都写着「怎么跑出来的」与「跑出来是什么」。
+所有断言都可以按本文的命令自行复跑。
+
+本轮改动的设计取舍见 docs/07-界面重构与实时执行流-2026-10-23.md。
+基线提交：c582b648（tag: baseline）；本轮提交见文末「九、提交序列」。
+
+
+一、门禁（未被本次改动破坏）
+----------------------------------------------------------------
+$ node src/cli.ts --gate --offline
+合计 8 样本（GOLD 5｜BAD 2｜AMBIGUOUS 1）：全部符合期望 → 门禁放行（退出码 0）
+（本轮共复跑 5 次，每次都是 8/8、退出码 0；引擎改动全是加法：Trace 多一个可选回调、
+ RunOptions 多两个可选字段、编排层多 5 处取消检查点，默认路径行为不变。）
+
+
+二、流式过程事件与取消传播（引擎 + HTTP 两层，22 项断言）
+----------------------------------------------------------------
+$ node scripts/verify-stream.mjs
+（本脚本自己拉一个 server 子进程跑 HTTP 断言，跑完杀掉，不需要手工起服务）
+
+引擎层：
+✓ 事件条数大于 1（是过程，不是结果复述） —— 20 条
+✓ 每条事件都带 seq / phase / kind / summary —— 首条 seq=1 phase=accept kind=understand
+✓ seq 严格递增（顺序即发生顺序） —— 1 → 20
+✓ 相位出现顺序符合编排（accept→…→close） —— accept → investigate → judge → approve → close
+✓ 最后一条事件早于结果返回（过程先于结论） —— 全程 87 毫秒，末条事件在第 87 毫秒
+✓ 事件与落盘轨迹逐条同源（同一份记录，不是两套口径） —— 轨迹 20 行 · 事件 20 条
+✓ 事件 detail 是结构化对象（界面不必解析 summary 字符串） —— 全部为对象
+✓ 取消在环节边界抛出 AbortError（不是静默跑完） —— 已取消：在环节边界停下，未执行资金处置
+✓ 取消发生在取证阶段、晚于受理（确实是在链路中途停下的） —— 取消点 = investigate 首次事件
+✓ 取消后没有返回结果（半成品不许当成功交出去） —— 未返回结果
+✓ 取消后从未进入审批/执行环节（不是跑到一半硬说没执行）
+    —— 本轮出现过的相位：accept → investigate
+
+HTTP 层（NDJSON /api/run/stream）：
+✓ 服务端能起来（HTTP 层断言的前提） —— 端口 8799
+✓ 流式端点返回 NDJSON（不是 application/json） —— application/x-ndjson; charset=utf-8
+✓ 线路上收到多条过程事件（真流式，不是一次性返回） —— 20 条事件
+✓ 结果行排在所有事件之后（过程先于结论） —— 共 22 行，结果在第 22 行
+✓ 事件条数与引擎侧一致（两条路同一份编排，不是各记一套） —— 线路 20 条 · 引擎 20 条
+✓ 事件 seq 在线路上仍严格递增 —— 1 → 20
+✓ 流式与普通两条路对同一案件结论一致
+    —— |授权闸放行并执行 aftersales.decide_refund|REFUND|389|PASS == 同左
+✓ 流式结果同样带着可回放的轨迹行 —— 21 行
+✓ 客户端断开时前端收到的就是 AbortError（不是被包装成别的东西） —— aborted
+✓ 客户端断开后服务端仍健在（不是一断就崩） —— 还可以继续服务
+✓ 断开的那一次没有产生审批单（未走到停办） —— 待审批 0 条
+
+—— 22/22 条通过 ——（退出码 0）
+
+说明「取消后从未进入审批/执行环节」这条为什么重要：它证明的是「压根没跑到授权那一步」，
+而不是「跑到了但没执行」——后者才是资金风险所在。
+
+
+三、真实浏览器逐项断言（Chromium / Edge 155，CDP 驱动，1440×900）
+----------------------------------------------------------------
+驱动方式：自写的零依赖 CDP 客户端（.devtools/cdp.mjs），每次断言取回一段 JSON，不靠眼看。
+
+3.1 八条样例全部走流式端点（服务端形态）
+$ 依次点击 8 个示例按钮，等 900ms，读会话状态
+{"i":"M01","t":"色差仅退款","st":"done","pend":false,"amt":389}
+{"i":"M02","t":"未收到货（物流已签收）","st":"blocked","pend":false}
+{"i":"M03","t":"破损 + 代收点签收","st":"pending","pend":true,"inline":true,"amt":1299}
+{"i":"M04","t":"物流延误赔付","st":"done","pend":false,"amt":49.9}
+{"i":"M05","t":"催发货","st":"done","pend":false}
+{"i":"M06","t":"换货请求","st":"done","pend":false}
+{"i":"M07","t":"退款金额超实付","st":"blocked","pend":false}
+{"i":"M08","t":"诉求不明","st":"clarify","pend":false}
+控制台报错：[] （8 条全跑，零报错）
+
+3.2 执行流是事件驱动（不是分拍点亮）
+点击 M01 后 1200ms：
+{"steps":6,"ev":20,"verdict":true,"tlTop":178}
+—— 6 行时间线、20 条过程记录、结论卡存在，且结论卡在 y=178（首屏可见）。
+关键：`ev=20` 与引擎侧事件数一致；时间线里每行的「过程记录 N 条」就是引擎轨迹原文。
+（旧版的假节奏代码 await setTimeout(150) × 6 已删除，仓库里 grep 不到。）
+
+3.3 内联审批两条闭环
+批准：
+  eval 前：{"has":true,"qs":4,"btns":2,"amt":"¥1,299.00"}   ← 四问齐、两个按钮、金额正确
+  填入审批人「王主管」→ 点「批准并执行」→ 1000ms 后：
+  {"st":"done","exec":true,"approver":"王主管","inline":false}
+  读屏播报：srLive = "已批准，Agent 已执行并向客户发送到账通知，…"
+驳回：
+  填入驳回理由后点「驳回」→ 1200ms 后：
+  {"st":"rejected","exec":false}
+  —— 驳回未执行任何资金动作；状态独立为「审批未通过」。
+
+3.4 键盘与命令面板
+Ctrl+K：    {"open":true,"items":16,"groups":"动作/处置记录/示例场景","focused":"palInput"}
+输入「数据」：1 项 → ↓ + Enter → {"view":"sources","pal":false,"h1":"数据源"}
+Tab（焦点陷阱）：document.activeElement = .pal-item（循环，不出面板）
+焦点在某一项上继续打字「j」：{"q":"j","focused":"palInput","n":0}（继续在搜索，而不是没反应）
+Esc：       {"closed":true}（焦点回到打开它的入口）
+j / j：     {"cur":"M01","cursor":"M01","kb":1}（队列键盘光标，条目高亮）
+按 4：      {"filter":"rejected","on":1}（指标筛选生效且同步高亮）
+
+3.5 三档响应式（计算样式，不是截图目测）
+1440×900 → {"side":"flex","queue":"flex","dq":"none","ds":"none","m":"flex"}
+1100×900 → {"side":"none","queue":"flex","dq":"none","ds":"grid","m":"flex"}   ← 右栏收成抽屉
+ 860×900 → {"side":"none","queue":"none","dq":"grid","ds":"grid","m":"none"}  ← 队列也收，指标条隐藏
+（窄屏隐藏指标条但数字没丢：右栏「处置概览」抽屉里是同一份、点得动——与上一版同口径。）
+
+3.6 抽屉的可访问性（角色跟着状态走）
+点图标轨上的抽屉入口后：
+{"sideOpen":true,"role":"dialog","modal":"true","focus":"side open","mask":true}
+  —— 打开时才是 dialog + aria-modal，焦点进抽屉，遮罩出现
+按 Esc 后：
+{"closed":true,"roleGone":true}
+  —— 关闭后 role/aria-modal 一并移除（宽屏常驻时它只是普通一栏，不该是模态框）
+
+3.7 无障碍与对比度（页内探针，浅/深两套主题）
+$ eval .devtools/ui/a11y.js; __a11y()
+浅色：{"focusable":55,"noNameCount":0,"bareSvgCount":0,"liveRegions":2,"roleCount":8,
+       "dialogOpen":1,"contrastFail":[]}
+深色：contrastFail = []
+  · 可交互元素 55 个，**可访问名 0 缺失**（文字 / aria-label / title / placeholder 任一即可）
+  · 装饰性 SVG 0 个漏标 aria-hidden
+  · 2 个 aria-live 区（读屏播报 + toast 容器）
+修复过程（留档，证明这条是量出来的）：
+  修前浅色 7 处不达标：.tl-dur 2.58:1、.qitem .r3 2.24:1、.sec > .st 2.58:1、
+  .composer .hint 2.58:1、.qitem .r2 4.13:1、.chip.mute 4.18:1、.tl-ev .tx 4.49:1
+  做法：按「三种底色（surface/surface-2/surface-3）上最差比值 ≥ 4.5」反算 ink-3/ink-4
+  （脚本 .devtools/ui/contrast.mjs，输出建议值），选中项脚注在蓝色底上单独提一级；
+  修后浅色 0 失败、深色 0 失败。
+
+
+四、工程术语卫哨（新界面不许漏技术词）
+----------------------------------------------------------------
+$ eval .devtools/ui/guard.js; __guard()
+首屏            → {"count":0,"hits":[]}
+跑完一条（M01）  → {"count":0,"hits":[]}
+人工审批页       → {"count":0,"hits":[]}
+数据源页        → {"count":0,"hits":[]}
+接口设置页       → {"count":0,"hits":[]}
+本轮给卫哨**新增 20 个禁用词**（phase / kind / seq / ndjson / event / tool_call /
+investigate / accept / approve / close / AbortController / AbortError / onEvent /
+checkpoint / undefined / null / NaN / "object Object" …）——即先用更严的尺子量，
+再宣称「新界面没有把过程事件里的技术词漏到人话层」。
+
+
+五、单文件版（file:// 直接打开，零安装形态）
+----------------------------------------------------------------
+$ open file:///…/craft-aftersales-agent/demo.html
+{"title":"售后 Agent · 自主处置台","engine":true,"stream":"function","banner":true,"presets":8}
+点击第一条示例后：
+{"steps":6,"ev":19,"verdict":true}
+控制台报错：[]
+  · 引擎在同一页里跑，`stream` 是真函数，过程事件是同步发生的回调（不是模拟流式）
+  · 19 条 vs 服务端 20 条的差异可解释：少的那条正是「参考历史同类案件」——
+    只有服务端形态有 runs/ 轨迹可回读，单文件版没有历史轨迹。这条差异本身也是「不做假数据」的证据。
+  · 审批闭环在单文件版同样成立：M03 内联批准 → {"st":"done","exec":true}，
+    读屏播报 "已批准，Agent 已执行并向客户发送到账通知，…"
+
+
+六、构建期自检（构建脚本新增两道）
+----------------------------------------------------------------
+$ node scripts/build-demo.mjs
+✓ 已生成 demo.html（393.5 KB，单文件、零安装）
+  内联模块 18 个 / 数据文件 11 个 / sha256 自校验通过 / 无模块语法残留
+新增校验：
+  · 第二条传输缝 __DEMO_STREAM__ 必须被替换（否则单文件版过程事件会断）
+  · 产出里必须出现 stream(path, body, handlers, opts)（页内引擎真的提供流式入口）
+  · 生成引擎先 new Function() 编译一遍再写盘（语法错误不等到浏览器里才发现）
+——本条是踩出来的：第一次把 stream() 误放进 call() 内部，正是这道编译自检立刻报的
+  「生成的引擎脚本有语法错误：Unexpected token '{'」。
+
+
+七、版本控制（本轮的每一步都有对应提交）
+----------------------------------------------------------------
+本机没有 git 可执行文件、网络被限制装不了，所以本轮用自写的零依赖 Git 实现
+（.devtools/git.mjs：blob/tree/commit 对象 + zlib + SHA-1 + refs + 二进制 index）。
+可信度来自两道自检：
+1) 拿本机另一个真实仓库的 **382 个 loose object** 当基准（253 blob / 110 tree / 19 commit）：
+   逐个「解压 → 重算 SHA-1」并对 tree/commit 做「解析 → 重新序列化 → 比哈希」，
+   **不一致 0 个**（序列化只要差一个字节——时区、空行、排序——哈希就对不上）。
+2) 对自己写的仓库 fsck：类型合法、长度自洽、名字等于内容哈希。
+   最新的提交后：本仓库自检 97 个对象（blob 65 / tree 26 / commit 6）· 不合格 0
+   工作区干净（status 无输出）。
+——第 1 项是必须的：只验「自己写、自己读」会漏掉写入口的错（本轮就漏过一次：
+  写对象时忘了拼 `type len\0` 头，对象名对、内容不对，只有 fsck 才拦得住）。
+
+
+八、本机环境的如实说明（不是本轮回归）
+----------------------------------------------------------------
+· MCP 通道未联通：`spawn EPERM`（沙箱子进程限制），数据源页如实显示「本地文件通路」，
+  取数仍走同一份 CSV、同一处校验。原有降级行为未被破坏。
+· 模型通道未实测：无可用密钥。门禁与全部断言都跑在规则判定上；
+  流式链路对模型模式结构相同（同一份 onEvent），但「模型模式下的观感」属未测，不宣称已验证。
+· 本轮没有修改任何判定口径：`src/auth.ts`、`src/reviewer.ts`、`src/judge.ts`、
+  `data/policy.json`、`data/sop.json` 均未改动（`git status` 可证）。
+
+
+九、提交序列（可用 .devtools/git.mjs checkout <ref> 回到任意一步）
+----------------------------------------------------------------
+c582b648  chore: 升级前基线快照 —— 原项目原样导入（仅额外排除运行时缓存 data/memory/）
+          [tag: baseline]
+57e0b049  feat(engine): 轨迹即事件源 —— 过程事件出口 onEvent + 环节边界取消传播 signal
+d318e149  feat(server): NDJSON 流式端点 /api/run/stream + 断开即取消传播
+bdb78d66  feat(ui): 视觉系统与外壳重构 + 事件驱动执行流 + 内联审批
+a48e73c3  feat(ui): 命令面板与键盘层、无障碍与对比度达标
+e11cb878  feat(demo): 单文件版接上真实过程事件（同一份 onEvent，不是模拟流式）
+（其后为文档与同步提交，见仓库 log）

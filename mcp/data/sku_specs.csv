@@ -1,0 +1,4 @@
+﻿sku_id,title,unit_price,spec,refundable_service_fee
+SKU-9901,实木书桌,268.00,"{""color"":""原木色"",""size"":""120cm""}",0
+SKU-9902,人体工学椅,899.00,"{""color"":""深灰"",""lumbar"":true}",0
+SKU-9903,落地灯,129.00,"{""color"":""米白""}",0

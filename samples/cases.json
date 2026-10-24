@@ -1,0 +1,133 @@
+{
+  "_file": "cases.json",
+  "_notice": "合成样本期望 · 非真实业务数据 · 仅用于本项目演示与回归门禁",
+  "_why": "三级样本集：GOLD = 应当顺畅走完链路并被放行；BAD = 必须被只读 Reviewer 或授权闸拦下；AMBIGUOUS = 规则没有确定性口径，只告警不阻断。回归门禁对三者一视同仁：实际行为必须等于期望行为，任何一项不符即退出码 1。",
+  "_conventions": [
+    "auth_tier：授权为 null 时（无不可逆动作，或被门禁阻断未进入授权）记 AUTO。",
+    "executed：是否真的执行了不可逆动作（executed_tool 非空）。",
+    "requires_requery：是否发生过 Reviewer 要求补证的一轮（requery_rounds > 0）。首轮取证刻意保守（只取 orders + refunds + logistics），因此 full 路径的样本期望值全部为 true —— 这是设计使然，不是缺陷。",
+    "门禁运行方式：--all 默认带 --auto-approve（ASK 档由脚本自动确认，用于验证「确认后放行」回路）；APPROVE 档在任何模式下都不会自动放行。"
+  ],
+  "rows": [
+    {
+      "sample_id": "S01",
+      "grade": "GOLD",
+      "msg_id": "M01",
+      "title": "色差仅退款：完整链路 + 补证 + ASK 档确认后执行",
+      "display": "色差仅退款",
+      "expect": {
+        "case_type": "REFUND_ONLY",
+        "verdict": "PASS",
+        "auth_tier": "ASK",
+        "requires_requery": true,
+        "follow_up_required": false,
+        "executed": true
+      }
+    },
+    {
+      "sample_id": "S02",
+      "grade": "BAD",
+      "msg_id": "M02",
+      "title": "未收到货但物流已本人签收：事实冲突必须被拦下",
+      "display": "未收到货（物流已签收）",
+      "expect": {
+        "case_type": "LOGISTICS_INQUIRY",
+        "verdict": "REJECT_FACT_CONFLICT",
+        "auth_tier": "AUTO",
+        "requires_requery": false,
+        "follow_up_required": true,
+        "executed": false
+      }
+    },
+    {
+      "sample_id": "S03",
+      "grade": "AMBIGUOUS",
+      "msg_id": "M03",
+      "title": "破损 + 代收点签收：无确定性口径只告警；金额 1299 超阈值必须挂起等人工审批",
+      "display": "破损 + 代收点签收",
+      "expect": {
+        "case_type": "REFUND_ONLY",
+        "verdict": "WARN_AMBIGUOUS",
+        "auth_tier": "APPROVE",
+        "requires_requery": true,
+        "follow_up_required": true,
+        "executed": false
+      }
+    },
+    {
+      "sample_id": "S04",
+      "grade": "GOLD",
+      "msg_id": "M04",
+      "title": "物流延误赔付：金额 49.90 未超 100，EXECUTE 档直接执行",
+      "display": "物流延误赔付",
+      "expect": {
+        "case_type": "REFUND_ONLY",
+        "verdict": "PASS",
+        "auth_tier": "EXECUTE",
+        "requires_requery": true,
+        "follow_up_required": false,
+        "executed": true
+      }
+    },
+    {
+      "sample_id": "S05",
+      "grade": "GOLD",
+      "msg_id": "M05",
+      "title": "纯催件：light 路径，无资金动作，直接结单回执物流状态",
+      "display": "催发货",
+      "expect": {
+        "case_type": "LOGISTICS_INQUIRY",
+        "verdict": "PASS",
+        "auth_tier": "AUTO",
+        "requires_requery": false,
+        "follow_up_required": false,
+        "executed": false
+      }
+    },
+    {
+      "sample_id": "S06",
+      "grade": "GOLD",
+      "msg_id": "M06",
+      "title": "换货：系统内无退款单，需自行判定新建换货工单；非资金不可逆动作走 ASK 档",
+      "display": "换货请求",
+      "expect": {
+        "case_type": "EXCHANGE",
+        "verdict": "PASS",
+        "auth_tier": "ASK",
+        "requires_requery": true,
+        "follow_up_required": false,
+        "executed": true
+      }
+    },
+    {
+      "sample_id": "S07",
+      "grade": "BAD",
+      "msg_id": "M07",
+      "title": "申请退 500 但实付只有 268：金额口径超限必须被拦下",
+      "display": "退款金额超实付",
+      "expect": {
+        "case_type": "REFUND_ONLY",
+        "verdict": "REJECT_AMOUNT",
+        "auth_tier": "AUTO",
+        "requires_requery": true,
+        "follow_up_required": true,
+        "executed": false
+      }
+    },
+    {
+      "sample_id": "S08",
+      "grade": "GOLD",
+      "msg_id": "M08",
+      "title": "诉求不明：只追问不猜，不进取证与判责",
+      "display": "诉求不明",
+      "expect": {
+        "case_type": "UNCLEAR",
+        "verdict": "CLARIFY_NEEDED",
+        "auth_tier": "AUTO",
+        "requires_requery": false,
+        "follow_up_required": true,
+        "executed": false
+      }
+    }
+  ]
+}

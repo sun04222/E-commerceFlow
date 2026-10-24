@@ -1,0 +1,3 @@
+﻿refund_id,order_id,applied_amount,reason_code,reason_text,applied_at,status
+R20260912-7701,O20260912-3301,268.00,COLOR_DIFF,收到的桌面颜色和详情页差很多,2026-09-12T18:40:00+08:00,applied
+R20260913-7702,O20260913-3302,899.00,DAMAGE_SIGNED,桌面有一道划痕而且是代收点签收的,2026-09-13T21:10:00+08:00,applied

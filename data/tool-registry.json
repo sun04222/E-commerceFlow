@@ -1,0 +1,83 @@
+{
+  "_file": "tool-registry.json",
+  "_notice": "声明式工具注册表 · 新数据源接入只改本文件，不改代码",
+
+  "_why": "这是简历要点一「取证与工具面」的实体：全部工具挂在统一命名空间下，全限定名消解跨系统同名覆盖；每个工具声明自己允许出现在哪些环节、是否只读、是否资金类动作。新增一个数据源 = 在本文件加一条 + 在 sources 目录放一个适配器描述，不动任何源码。",
+
+  "namespace": "aftersales",
+
+  "tools": [
+    {
+      "short": "query_order",
+      "source": "orders",
+      "title": "按订单号查询订单主数据",
+      "read_only": true,
+      "money_action": false,
+      "phases": ["investigate", "judge", "approve", "close"],
+      "signature": { "order_id": "string" }
+    },
+    {
+      "short": "query_refund",
+      "source": "refunds",
+      "title": "按退款单号查询退款申请（可能不存在）",
+      "read_only": true,
+      "money_action": false,
+      "phases": ["investigate", "judge", "approve", "close"],
+      "signature": { "refund_id": "string" }
+    },
+    {
+      "short": "query_sku_spec",
+      "source": "sku_specs",
+      "title": "按 SKU 查询规格与可退服务费",
+      "read_only": true,
+      "money_action": false,
+      "phases": ["investigate", "judge", "approve", "close"],
+      "signature": { "sku_id": "string" }
+    },
+    {
+      "short": "query_logistics",
+      "source": "logistics",
+      "title": "按订单号查询物流节点与签收事实",
+      "read_only": true,
+      "money_action": false,
+      "phases": ["investigate", "judge", "approve", "close"],
+      "signature": { "order_id": "string" }
+    },
+    {
+      "short": "query_ticket",
+      "source": "tickets",
+      "title": "按订单号查询客服工单记录",
+      "read_only": true,
+      "money_action": false,
+      "phases": ["investigate", "judge", "approve", "close"],
+      "signature": { "order_id": "string" }
+    },
+    {
+      "short": "create_return_label",
+      "source": "action",
+      "title": "生成退货运单（不可逆：客户随即要寄回）",
+      "read_only": false,
+      "money_action": false,
+      "phases": ["approve"],
+      "signature": { "order_id": "string", "reason": "string" }
+    },
+    {
+      "short": "create_exchange",
+      "source": "action",
+      "title": "创建换货工单（不可逆：触发仓内换发）",
+      "read_only": false,
+      "money_action": false,
+      "phases": ["approve"],
+      "signature": { "order_id": "string", "target_spec": "string" }
+    },
+    {
+      "short": "decide_refund",
+      "source": "action",
+      "title": "对退款作出处置结论（不可逆资金动作，按金额分档）",
+      "read_only": false,
+      "money_action": true,
+      "phases": ["approve"],
+      "signature": { "refund_id": "string", "decision": "string", "amount": "number", "criteria_ids": "string[]" }
+    }
+  ]
+}

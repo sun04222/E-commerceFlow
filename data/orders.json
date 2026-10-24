@@ -1,0 +1,83 @@
+{
+  "_dataset": "orders",
+  "_notice": "合成数据 · 非真实业务数据 · 仅用于本项目演示与回归门禁",
+  "rows": [
+    {
+      "order_id": "O20260808-1107",
+      "buyer_id": "U-2291",
+      "sku_id": "SKU-8842",
+      "qty": 1,
+      "paid_amount": 389.00,
+      "currency": "CNY",
+      "paid_at": "2026-08-08T14:22:10+08:00",
+      "status": "已签收",
+      "sales_channel": "自营"
+    },
+    {
+      "order_id": "O20260809-2210",
+      "buyer_id": "U-3318",
+      "sku_id": "SKU-7715",
+      "qty": 1,
+      "paid_amount": 268.00,
+      "currency": "CNY",
+      "paid_at": "2026-08-09T09:41:55+08:00",
+      "status": "已签收",
+      "sales_channel": "自营"
+    },
+    {
+      "order_id": "O20260810-3301",
+      "buyer_id": "U-4106",
+      "sku_id": "SKU-9021",
+      "qty": 1,
+      "paid_amount": 1299.00,
+      "currency": "CNY",
+      "paid_at": "2026-08-10T21:07:33+08:00",
+      "status": "已签收",
+      "sales_channel": "自营"
+    },
+    {
+      "order_id": "O20260805-0912",
+      "buyer_id": "U-1874",
+      "sku_id": "SKU-6604",
+      "qty": 1,
+      "paid_amount": 49.90,
+      "currency": "CNY",
+      "paid_at": "2026-08-05T11:15:02+08:00",
+      "status": "已签收",
+      "sales_channel": "自营"
+    },
+    {
+      "order_id": "O20260811-4402",
+      "buyer_id": "U-5520",
+      "sku_id": "SKU-5530",
+      "qty": 1,
+      "paid_amount": 899.00,
+      "currency": "CNY",
+      "paid_at": "2026-08-11T10:02:00+08:00",
+      "status": "运输中",
+      "sales_channel": "自营"
+    },
+    {
+      "order_id": "O20260812-5503",
+      "buyer_id": "U-2291",
+      "sku_id": "SKU-8842",
+      "qty": 1,
+      "paid_amount": 389.00,
+      "currency": "CNY",
+      "paid_at": "2026-08-12T16:30:00+08:00",
+      "status": "已签收",
+      "sales_channel": "自营"
+    },
+    {
+      "order_id": "O20260813-6604",
+      "buyer_id": "U-3318",
+      "sku_id": "SKU-7715",
+      "qty": 1,
+      "paid_amount": 268.00,
+      "currency": "CNY",
+      "paid_at": "2026-08-13T09:12:00+08:00",
+      "status": "已签收",
+      "sales_channel": "自营"
+    }
+  ]
+}

@@ -1,0 +1,242 @@
+══════════════════════════════════════════════════════════════════════════════
+运行证据 · 数据源接入（MCP）+ 微信入站 + 前端去说明书化改版
+日期：2026-10-15    形态：本地服务端（node desktop/server.mjs，端口 8787）+ 单文件演示版
+环境：Windows / Chromium（agent-browser 驱动）/ Node v22.22.2 / 离线规则判定（另附模型模式耗时）
+══════════════════════════════════════════════════════════════════════════════
+
+【一】MCP 服务端自测（不经过任何界面，直接跑协议）
+
+  命令：node mcp/server.mjs --list
+  结果（9 个工具，命名空间前缀 commerce.）：
+    commerce.orders_list     按店铺与时间窗拉订单
+    commerce.orders_get      按订单号查单条订单
+    commerce.refunds_list    按店铺与时间窗拉退款申请
+    commerce.refunds_get     按退款单号查申请
+    commerce.tickets_list    按订单号拉客服工单
+    commerce.logistics_list  按时间窗拉物流轨迹
+    commerce.logistics_get   按订单号拉物流与签收事实
+    commerce.sku_list        按店铺拉商品规格
+    commerce.sku_get         按 SKU 拉规格与可退服务费
+
+  命令：node .tmp/mcp-selftest.mjs（客户端子进程握手）
+    initialize →  {"name":"commerce-connectors","version":"1.0.0"}  协议 2024-11-05
+    tools/list →  9 个工具
+    tools/call commerce.orders_get {order_id:"O20260913-3302"} → 1 行，paid_amount=899（数值已还原为 number）
+    tools/call commerce.nope   → isError=true，"未知工具：commerce.nope"（不崩连接）
+    tools/call commerce.refunds_list → 2 行
+
+  注：CSV 里的 paid_amount/qty 是字符串，服务端返回前已按数值/布尔/JSON 字面量还原为真类型；
+      调用方拿到的 structuredContent 不必再解析一遍字符串。
+
+【二】桌面端启动与 MCP 联通
+
+  node desktop/server.mjs（PORT=8787）
+  启动日志：
+    售后 Agent 桌面端已启动：http://127.0.0.1:8787
+    模型通道：可用（<模型名>）
+    数据连接器：6 个（订单中台 / 售后工单 / 物流轨迹 / 商品规格 / 表格导入 / 微信客户消息）｜MCP 服务端已联通，工具 9 个
+
+  GET /api/connectors →
+    protocol mcp | mcp.ready true | tools 9 | serverInfo {"name":"commerce-connectors","version":"1.0.0"}
+    datasets 订单:7 退款单:5 商品规格:5 物流:7 客服工单:7
+      MCP 订单中台   | 订单(7)                    | 工具 2/2 在线
+      MCP 售后工单   | 退款单(5),客服工单(7)       | 工具 3/3 在线
+      MCP 物流轨迹   | 物流(7)                    | 工具 2/2 在线
+      MCP 商品规格   | 商品规格(5)                 | 工具 2/2 在线
+      文件 表格导入  | —                          | op=ingest
+      入站 微信客户消息 | —                        | op=inbound
+
+【三】连接器拉数（真走 MCP tools/call）
+
+  POST /api/connectors/pull {"id":"*"}
+    订单中台 | 通道 mcp | 新增 4 更新 0 拒绝 0 | orders +4
+    售后工单 | 通道 mcp | 新增 4 更新 0 拒绝 0 | refunds +2 tickets +2
+    物流轨迹 | 通道 mcp | 新增 4 更新 0 拒绝 0 | logistics +4
+    商品规格 | 通道 mcp | 新增 3 更新 0 拒绝 0 | sku_specs +3
+    库内规模：{"orders":11,"refunds":7,"sku_specs":8,"logistics":11,"tickets":9}
+
+  幂等复拉 POST /api/connectors/pull {"id":"orders-hub"}
+    新增 0 更新 4 拒绝 0    ← 按主键 upsert，重复拉取不产生重复行
+
+【四】导入校验（脏数据不吃默认值）
+
+  POST /api/ingest（orders）
+    第 1 行：O20260920-4401  正常
+    第 2 行：qty=abc          拒绝
+    第 3 行：order_id 为空     拒绝
+    回执：{"added":1,"updated":0,"rejected":2,
+           "errors":["第 2 行：qty 不是数字：abc","第 3 行：第 order_id 列（主键）为空"]}
+    库内：orders 由 11 → 12（两条脏数据未落库，也没有被补成默认值）
+
+  同一份合法数据再导一次：{"added":0,"updated":1,"rejected":0}
+
+【五】导入即刻生效（拉进来的数据马上能用来办案）
+
+  POST /api/inbound {"text":"你好，我9月12号在你们抖音小店买的那个书桌，收到颜色跟详情页差太多了，我要退钱",
+                     "from":"客户 李先生","channel":"微信小店","msg_id":"wx-msg-0001"}
+    结论：授权闸放行并执行 aftersales.decide_refund
+    复核：PASS ｜ 执行动作：aftersales.decide_refund
+    回复：您好，您的退款已处理完成，退款金额 268 元将按原支付路径退回，请注意查收。
+    轨迹：20 行 JSONL
+  ↑ 这条订单（O20260912-3301）正是【三】里刚从 MCP 拉进来的快照数据
+    —— 引擎每次运行实时从同一份 store 取数，导入后不需要重启服务
+
+  同 msg_id 重复投递：
+    {"ok":true,"deduped":true,"msg_id":"wx-msg-0001","note":"该消息已处理过，未重复执行"}
+
+【六】浏览器实测（真实 Chromium，逐项断言）
+
+  1) 首屏工作台（去说明书化）
+     标题「处置台」｜副标题「MCP 已联通 · 9 个数据工具」
+     三块：数据已接入（订单 7 / 退款单 5 / 商品规格 5 / 物流 7 / 客服工单 7）｜等你拍板｜最近的处置
+     hasBrochure(是否还有「给谁用」)=false ｜ btnHelp 已移除
+     工程术语卫哨：clean
+
+  2) 数据源页
+     6 张连接器卡：订单中台|已联通 2/2、售后工单|已联通 3/3、物流轨迹|已联通 2/2、
+                   商品规格|已联通 2/2、表格导入|按需导入、微信客户消息|入站口就绪
+     点「拉取数据」→ 回执「从 MCP 服务端取数：新增 4 行」，库内 订单 7 → 11
+     点「全部拉取」→ 库内 订单11 / 退款单7 / 商品规格8 / 物流11 / 客服工单9
+     卫哨：clean
+
+  3) 导入面板
+     点「填示例」→ 面板自动填一行示例 → 点「导入」→「导入到「订单」：新增 1 行」
+     再点一次 →「导入到「订单」：更新 1 行」
+     脏数据（qty=abc 与空主键）→「导入到「订单」：拒绝 2 行
+                                  · 第 1 行：qty 不是数字：abc
+                                  · 第 2 行：第 order_id 列（主键）为空」
+     库内订单条数不变
+
+  4) 微信入站（唯一消息，¥268 色差）
+     填「客户 李先生 / 微信小店 / 我9月12号在抖音小店买的书桌颜色跟详情页差太多，我要退钱 …」→ 点「投递一条」
+     视图切到处置页 ｜ 结论横幅「已自主完成处置」
+     第五步「已按「执行前询问」放行并完成处置：¥268」
+     回复「您好，您的退款已处理完成，退款金额 268 元将按原支付路径退回，请注意查收。」
+     指标「1 已自动处理」｜队列「客户 李先生」
+     卫哨：clean
+
+  5) 同一消息再投一次
+     入站流水：["已去重","已处置"] ｜ 队列条数仍为 1
+     服务端入站流水 2 条 ["duplicate","handled"]
+
+  6) 大额案件 → 停办转审批 → 批准闭环
+     样本 S03（破损 + 代收点签收）→ 指标「1 待人工审批」
+     审批卡：单号 20261015-02 ｜ ¥1,299.00
+     点指标「待人工审批」→ 进审批中心（筛选标签「待人工审批 1」）
+     填审批人「王主管」→ 点「批准并执行」→
+       横幅「已自主完成处置」｜第五步「已按「升级人工审批」放行并完成处置：¥1,299」
+       回复「您好，您的退款申请已通过人工审批，退款金额 1299 元将按原支付路径退回…」
+       审批卡归零，指标回到「1 已自动处理」
+
+  7) 指标条点击回归（未受改版影响）
+     点「已自动处理」→ 队列 1 条 + 标签「已自动处理 1」
+     点「清除筛选」→ 恢复全量（共 2 条，均由 Agent 自主推进）
+
+  8) GBK 编码文件识别
+     GBK 编码 CSV（249 字节，中文内容「天猫」「微信小店」）
+     读入后：len=240，无 U+FFFD 替换字符，含「天猫」=true，含「微信小店」=true
+     （页面内 TextDecoder("gbk") 可用性单独验证：字节 CC EC C3 A8 → "天猫"）
+
+  9) 工程术语卫哨（每步均跑）
+     扫描 .app 渲染文本，50 项禁止词（src/ .ts .mjs .env cli offline_rule aftersales. GOLD BAD
+     AMBIGUOUS 退出码 judge trace JSONL gate Reviewer requery expect namespace PASS EXECUTE ASK
+     APPROVE AUTO WARN REJECT CLARIFY INQUIRY sop slots msg_id PENDING APPROVED deferApproval
+     pending_approval AUTO_EXECUTED SKIPPED_BY_GATE judge_source case_type money_action
+     auto_limit stop_reason holding_reply ticket APR- --）
+     结果：工作台 / 数据源页 / 处置页 / 入站后 / 指标筛选后 —— 全部 clean
+     说明：数据源页上 <code> 内的 MCP 工具名与接口地址（commerce.orders_list、POST /api/inbound）
+           属于必要的集成标识，卫哨已显式排除该节点，业务视图仍零容错
+
+【七】单文件演示版 demo.html 复测（零安装形态）
+
+  node scripts/build-demo.mjs
+    ✓ 已生成 demo.html（247.9 KB，单文件、零安装）
+      内联模块 17 个 / 数据文件 11 个 / sha256 自校验通过 / 无模块语法残留
+    （新增内联 src/ingest.ts、src/connectors.ts；CSV 快照按原文进虚拟文件系统）
+
+  file:// 打开后：
+    引擎错误：无
+    工作台：标题「处置台」｜副标题「数据源未联通，正在以本地文件通路取数」
+            数据已接入 订单7 / 退款单5 / 商品规格5 / 物流7 / 客服工单7 ｜ 单文件演示横幅在位
+    引擎标签：「内置规则判定」
+    数据源页：顶部「MCP 未联通 · 走本地文件通路」（如实标注，不假装有子进程）
+              连接器卡：订单中台|本地文件通路、售后工单|本地文件通路、物流轨迹|本地文件通路、
+                        商品规格|本地文件通路、表格导入|按需导入、微信客户消息|入站口就绪
+    点「全部拉取」→ 四条回执「从本地数据文件取数：新增 4 / 4 / 4 / 3 行」
+                    库内 订单11 / 退款单7 / 商品规格8 / 物流11 / 客服工单9（与本地服务端一致）
+    导入示例 →「导入到「订单」：新增 1 行」
+    入站一条书桌色差消息 →「已自主完成处置」＋客户回复，指标「1 已自动处理」
+    指标点击：「已自动处理」筛出 1 条 + 标签；「清除筛选」恢复
+    卫哨：clean
+
+【八】回归门禁（未受本次改版影响）
+
+  node src/cli.ts --gate --offline
+  S01 GOLD      REFUND_ONLY       PASS                  ASK     符合期望
+  S02 BAD       LOGISTICS_INQUIRY REJECT_FACT_CONFLICT  AUTO    符合期望
+  S03 AMBIGUOUS REFUND_ONLY       WARN_AMBIGUOUS        APPROVE 符合期望
+  S04 GOLD      REFUND_ONLY       PASS                  EXECUTE 符合期望
+  S05 GOLD      LOGISTICS_INQUIRY PASS                  AUTO    符合期望
+  S06 GOLD      EXCHANGE          PASS                  ASK     符合期望
+  S07 BAD       REFUND_ONLY       REJECT_AMOUNT         AUTO    符合期望
+  S08 GOLD      UNCLEAR           CLARIFY_NEEDED        AUTO    符合期望
+
+  合计 8 样本（GOLD 5｜BAD 2｜AMBIGUOUS 1）：全部符合期望 → 门禁放行（退出码 0）
+
+【九】判定引擎耗时实测（为什么界面上要能切）
+
+  GET  /api/bootstrap            → mode = model（.env 里有可用密钥）
+  POST /api/run offline=true     → HTTP 200，0.12 s
+  POST /api/run offline=false    → HTTP 200，25.36 s   ← 多轮提示词 + 真实网络
+
+  ⇒ 顶栏引擎标识做成可点切换：切到「内置规则判定」秒级出结果，
+    切回「智能模型判定」走大模型。两条通路的处置口径由同一套 SOP 与授权闸决定，
+    切换不改变结论口径，只改变由谁做判断。
+    单文件版没有密钥通道，恒为「内置规则判定」，点击只提示原因，不谎报。
+
+【十】本次修掉的三个真实缺陷
+
+  1) 服务端异常只回 JSON、不留痕
+     现象：界面上只看到「处理失败：请求失败：500」，分不清「请求没到」还是「处理时炸了」
+     修复：desktop/server.mjs 兜底 catch 增加 console.error(method, path, err)
+     验证：重启后控制台可见具体堆栈；正常路径不受影响
+
+  2) 表单值只信状态镜像
+     现象：<textarea> 的 input 事件写 st.wxText / st.impText，提交时读状态；
+           一次重渲染与一次合成事件交错时会出现「框里有字却提示为空」
+     修复：提交时以 DOM 当前值优先（box.value || st.xxx），状态只用于回填
+     验证：单次 eval 内「填表 → 点击 → 轮询结果」8.7 s 内完成，入站/导入两条路径均正常
+
+  3) 刷新页面后「流水里有处置记录、指标却是 0」（改版后自检发现）
+     现象：入站流水存在服务端（GET /api/inbound 有 4 条，含已处置与已去重），
+           但队列与五档指标来自页内会话数组 → 重新打开页面时全部归零。
+           结果就是同一屏上「已处置 5 条」与「0 已自动处理」自相矛盾。
+     修复（两侧各一步）：
+       · desktop/server.mjs：入站流水条目带上该次的处置结果；GET 只给最近 8 条带 result，
+         再往前的只留流水（不把 40 条完整轨迹都塞进响应）
+       · desktop/public/index.html loadInbound()：启动时把带 result 的条目回灌成会话
+         （id 用 wx-<msg_id>，同 id 幂等，最新在前），手贴原话产生的会话不受影响
+       · scripts/build-demo.mjs 的单文件版同步改这两处；顺带把单文件版的入站判重口径
+         对齐服务端（原来把 __inboundSeq 掺进哈希 → 每次都是新消息、永不判重；
+         改为 hash(from|channel|text)，两侧算出的 msg_id 完全一致）
+     验证（真实 Chromium，重启服务取干净基线）：
+       干净基线            → 指标全 0、队列 0 条
+       微信投一条          → 指标「1 已自动处理」、队列 1 条、案卷六步 + 结论 + 回复齐全
+       同一条再投两次      → 服务端返回 deduped=true，流水多两条「已去重」，
+                             指标与队列都不动（1 条 / 1 已自动处理）
+       刷新页面            → st.sessions = 1、st.inbound = 2，指标仍「1 已自动处理」、队列仍 1 条
+       点回那条记录        → 六步全还原（steps=6）、横幅「已自主完成处置」、客户回复可读
+     单文件版复验（file://）：同一条消息连投三次 → 第一次 handled（有结果）、
+       第二/三次 deduped=true、流水 duplicate/duplicate/handled、带结果的条目 1 条；
+       刷新即重置（一切在页内内存，无服务端可回灌）——这是单文件形态使然，已在文档中写明
+
+【十一】结论
+
+  1. 数据接入是真的：MCP 子进程握手、9 个工具、tools/call 取数、按主键 upsert，全部可复现；
+  2. 口径是唯一的：MCP / 文件 / 入站三条通路最后都进 src/ingest.ts，脏数据一律拒绝并报行号；
+  3. 导入即生效：新拉进来的订单当场被一条微信消息用上，走完六步自主退款；
+  4. 微信链路闭环：入站 → 去重 → 处置 → 可回写回复；重复投递不跑第二遍；
+     且**重新打开页面时队列与指标接着上一轮**（最近 8 条带结果回灌），不再出现「流水有记录、指标是 0」；
+  5. 前端按用户意见重做：首屏不再自我说明，改成工作台；数据源独立成页；说明书式弹层已删除；
+  6. 降级是诚实的：MCP 连不上就标「本地文件通路」，模型切换标注耗时而非假装一样快；
+  7. 原有能力无回归：8/8 门禁、审批批准闭环、指标条点击、术语卫哨多视图 clean。

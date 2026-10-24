@@ -1,0 +1,86 @@
+{
+  "_dataset": "connectors",
+  "_notice": "合成数据 · 连接器声明仅用于本项目演示；真实平台接入需要商家自行授权凭据（凭据只进本地 .env，不进本文件）",
+  "protocol": "mcp",
+  "namespace": "commerce",
+  "server": "mcp/server.mjs",
+  "connectors": [
+    {
+      "id": "orders-hub",
+      "name": "订单中台",
+      "kind": "mcp",
+      "badge": "MCP",
+      "platforms": ["抖音小店", "微信小店", "天猫", "拼多多", "快手小店"],
+      "desc": "按店铺与时间窗拉取订单主数据：订单号、实付金额、渠道、支付时间",
+      "auth": "商家自持凭据（AppKey / Secret），只存放在本地 .env",
+      "tools": [
+        { "name": "orders_list", "title": "按店铺与时间窗拉订单", "op": "list", "dataset": "orders", "file": "mcp/data/orders.csv" },
+        { "name": "orders_get", "title": "按订单号查单条订单", "op": "get", "dataset": "orders", "file": "mcp/data/orders.csv", "key": "order_id" }
+      ]
+    },
+    {
+      "id": "aftersales-hub",
+      "name": "售后工单",
+      "kind": "mcp",
+      "badge": "MCP",
+      "platforms": ["抖音小店", "微信小店", "天猫", "拼多多"],
+      "desc": "退款申请单与客服历史工单：申请金额、退款原因、受理记录",
+      "auth": "商家自持凭据（AppKey / Secret），只存放在本地 .env",
+      "tools": [
+        { "name": "refunds_list", "title": "按店铺与时间窗拉退款申请", "op": "list", "dataset": "refunds", "file": "mcp/data/refunds.csv" },
+        { "name": "refunds_get", "title": "按退款单号查申请", "op": "get", "dataset": "refunds", "file": "mcp/data/refunds.csv", "key": "refund_id" },
+        { "name": "tickets_list", "title": "按订单号拉客服工单", "op": "list", "dataset": "tickets", "file": "mcp/data/tickets.csv" }
+      ]
+    },
+    {
+      "id": "logistics-hub",
+      "name": "物流轨迹",
+      "kind": "mcp",
+      "badge": "MCP",
+      "platforms": ["中通快递", "圆通速递", "韵达快递", "极兔速递"],
+      "desc": "承运商轨迹与签收事实：是否签收、签收人、节点时间线",
+      "auth": "按承运商开通的查询账号",
+      "tools": [
+        { "name": "logistics_list", "title": "按时间窗拉物流轨迹", "op": "list", "dataset": "logistics", "file": "mcp/data/logistics.csv" },
+        { "name": "logistics_get", "title": "按订单号拉物流与签收事实", "op": "get", "dataset": "logistics", "file": "mcp/data/logistics.csv", "key": "order_id" }
+      ]
+    },
+    {
+      "id": "catalog-hub",
+      "name": "商品规格",
+      "kind": "mcp",
+      "badge": "MCP",
+      "platforms": ["抖音小店", "微信小店", "天猫", "拼多多"],
+      "desc": "SKU 规格、单价与可退服务费口径 —— 金额判定的基准来源",
+      "auth": "商家自持凭据（AppKey / Secret），只存放在本地 .env",
+      "tools": [
+        { "name": "sku_list", "title": "按店铺拉商品规格", "op": "list", "dataset": "sku_specs", "file": "mcp/data/sku_specs.csv" },
+        { "name": "sku_get", "title": "按 SKU 拉规格与可退服务费", "op": "get", "dataset": "sku_specs", "file": "mcp/data/sku_specs.csv", "key": "sku_id" }
+      ]
+    },
+    {
+      "id": "table-import",
+      "name": "表格导入",
+      "kind": "file",
+      "badge": "文件",
+      "platforms": ["任意平台"],
+      "desc": "直接粘贴或上传 CSV / TSV / JSON，按主键合并进引擎：重复导入只更新、不产生重复行",
+      "auth": "无（本地文件）",
+      "tools": [
+        { "name": "ingest_text", "title": "解析并合并一段分隔符文本", "op": "ingest" }
+      ]
+    },
+    {
+      "id": "wechat-inbound",
+      "name": "微信客户消息",
+      "kind": "webhook",
+      "badge": "入站",
+      "platforms": ["微信小店", "公众号", "小程序客服"],
+      "desc": "客户消息进来自动进处置队列，处置结论按原路回写；同一 message_id 重复投递会自动去重",
+      "auth": "需在微信侧配置回调地址与 Token/EncodingAESKey（本工程演示用本地入站口）",
+      "tools": [
+        { "name": "inbound", "title": "接收一条客户消息并触发处置", "op": "inbound" }
+      ]
+    }
+  ]
+}

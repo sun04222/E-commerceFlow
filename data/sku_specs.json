@@ -1,0 +1,41 @@
+{
+  "_dataset": "sku_specs",
+  "_notice": "合成数据 · 非真实业务数据 · 仅用于本项目演示与回归门禁",
+  "rows": [
+    {
+      "sku_id": "SKU-8842",
+      "title": "人体工学椅 标准款",
+      "unit_price": 389.00,
+      "spec": { "颜色": "浅灰", "安装服务": false },
+      "refundable_service_fee": 0.00
+    },
+    {
+      "sku_id": "SKU-7715",
+      "title": "折叠餐桌 1.2m",
+      "unit_price": 268.00,
+      "spec": { "颜色": "原木色", "安装服务": false },
+      "refundable_service_fee": 0.00
+    },
+    {
+      "sku_id": "SKU-9021",
+      "title": "电动升降桌 1.4m",
+      "unit_price": 1299.00,
+      "spec": { "颜色": "白色", "安装服务": false },
+      "refundable_service_fee": 0.00
+    },
+    {
+      "sku_id": "SKU-6604",
+      "title": "可折叠收纳箱 60L",
+      "unit_price": 49.90,
+      "spec": { "颜色": "米白", "安装服务": false },
+      "refundable_service_fee": 0.00
+    },
+    {
+      "sku_id": "SKU-5530",
+      "title": "升降晾衣架 电动款",
+      "unit_price": 899.00,
+      "spec": { "颜色": "白色", "安装服务": false },
+      "refundable_service_fee": 0.00
+    }
+  ]
+}

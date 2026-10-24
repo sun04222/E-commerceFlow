@@ -1,0 +1,52 @@
+{
+  "_dataset": "refunds",
+  "_notice": "合成数据 · 非真实业务数据 · 仅用于本项目演示与回归门禁",
+  "_note": "注意：本表只覆盖已经提交过退款申请的咨询。M05（催物流）与 M06（换货）在系统里并没有退款单 —— agent 必须在流程中自行判定「是否需要新建工单」，这正是与上一版「拿着单号核对」的本质区别。",
+  "rows": [
+    {
+      "refund_id": "R20260815-0031",
+      "order_id": "O20260808-1107",
+      "applied_amount": 389.00,
+      "reason_code": "COLOR_MISMATCH",
+      "reason_text": "商品颜色与下单不一致",
+      "applied_at": "2026-08-15T10:03:00+08:00",
+      "status": "审核中"
+    },
+    {
+      "refund_id": "R20260816-0044",
+      "order_id": "O20260809-2210",
+      "applied_amount": 268.00,
+      "reason_code": "NOT_RECEIVED",
+      "reason_text": "未收到货",
+      "applied_at": "2026-08-16T19:48:00+08:00",
+      "status": "审核中"
+    },
+    {
+      "refund_id": "R20260817-0052",
+      "order_id": "O20260810-3301",
+      "applied_amount": 1299.00,
+      "reason_code": "DAMAGED",
+      "reason_text": "商品破损",
+      "applied_at": "2026-08-17T08:33:00+08:00",
+      "status": "审核中"
+    },
+    {
+      "refund_id": "R20260818-0060",
+      "order_id": "O20260805-0912",
+      "applied_amount": 49.90,
+      "reason_code": "LOGISTICS_DELAY",
+      "reason_text": "物流严重延误，申请补偿",
+      "applied_at": "2026-08-18T13:05:00+08:00",
+      "status": "审核中"
+    },
+    {
+      "refund_id": "R20260819-0071",
+      "order_id": "O20260813-6604",
+      "applied_amount": 500.00,
+      "reason_code": "NOT_RECEIVED",
+      "reason_text": "未收到货，要求退500",
+      "applied_at": "2026-08-19T11:20:00+08:00",
+      "status": "审核中"
+    }
+  ]
+}

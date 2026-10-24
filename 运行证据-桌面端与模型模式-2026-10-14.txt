@@ -1,0 +1,134 @@
+运行证据 · 模型模式门禁 + 桌面端看板（2026-10-14 实测）
+================================================================================
+说明：本文件不含任何密钥信息。模型模式所需的 LLM_API_KEY 只存在于本地 .env
+（已 gitignore），本文件与任何文档、看板、记忆中均不出现该值。
+
+────────────────────────────────────────────────────────────────────────────────
+一、模型模式回归门禁：8/8 符合期望，退出码 0
+────────────────────────────────────────────────────────────────────────────────
+命令：node src/cli.ts --gate --auto-approve
+      （不带 --offline，走真实模型通道；--auto-approve 只放行 ASK 档，
+       APPROVE 档任何模式下都不自动放行）
+
+样本  等级      案件类型          复核裁决              授权    补证 执行 跟进 结果
+────────────────────────────────────────────────────────────────────────────────
+S01   GOLD      REFUND_ONLY       PASS                  ASK     ✓    ✓    -    ✓ 符合期望
+S02   BAD       LOGISTICS_INQUIRY REJECT_FACT_CONFLICT  AUTO    -    -    ✓    ✓ 符合期望
+S03   AMBIGUOUS REFUND_ONLY       WARN_AMBIGUOUS        APPROVE ✓    -    ✓    ✓ 符合期望
+S04   GOLD      REFUND_ONLY       PASS                  EXECUTE ✓    ✓    -    ✓ 符合期望
+S05   GOLD      LOGISTICS_INQUIRY PASS                  AUTO    -    -    -    ✓ 符合期望
+S06   GOLD      EXCHANGE          PASS                  ASK     ✓    ✓    -    ✓ 符合期望
+S07   BAD       REFUND_ONLY       REJECT_AMOUNT         AUTO    ✓    -    ✓    ✓ 符合期望
+S08   GOLD      UNCLEAR           CLARIFY_NEEDED        AUTO    -    -    ✓    ✓ 符合期望
+────────────────────────────────────────────────────────────────────────────────
+
+合计 8 样本（GOLD 5｜BAD 2｜AMBIGUOUS 1）：全部符合期望 → 门禁放行（退出码 0）
+EXIT_CODE=0
+
+对照：离线模式（node src/cli.ts --gate --offline）同样 8/8、退出码 0。
+双模式全绿 —— 同一套门禁判定在规则版与模型版下都成立。
+
+────────────────────────────────────────────────────────────────────────────────
+二、模型模式单样本（M01，全链路）
+────────────────────────────────────────────────────────────────────────────────
+命令：curl -X POST /api/run -d '{"msgId":"M01","offline":false,"autoApproveAsk":true}'
+
+  ok             = true
+  expect_errors  = []                       ← 六项期望全过
+  case_type      = REFUND_ONLY
+  verdict        = PASS
+  auth_tier      = ASK
+  executed       = aftersales.decide_refund
+  requery_rounds = 1
+  judge_source   = model                    ← 判据来自模型，非规则兜底
+
+对应轨迹文件 runs/M01-2026-10-14T19-01-52-501Z.jsonl（20 行）：
+  session_header: judge_mode = model
+  判据归纳完成（来源：model）
+  补证后重新归纳判据（来源：model）
+
+────────────────────────────────────────────────────────────────────────────────
+三、桌面端 HTTP API 全端点
+────────────────────────────────────────────────────────────────────────────────
+GET  /              → 200，31686 bytes（改前端刷新即生效，服务按请求读盘）
+GET  /api/bootstrap → ok=true | mode=model（自动识别本地密钥）| node=v22.22.2 | samples=8
+POST /api/run       → M01：PASS / ASK / executed=aftersales.decide_refund / 20 行轨迹 / 期望误差 0
+POST /api/ask       → 自然语言「8月11号买的单」解析出 O20260811-4402，type=LOGISTICS_INQUIRY
+POST /api/gate      → passed=8/8，failed=0
+
+────────────────────────────────────────────────────────────────────────────────
+四、桌面端真实浏览器冒烟（Chromium + agent-browser）
+────────────────────────────────────────────────────────────────────────────────
+1) 首屏（离线规则默认）
+   - 页面标题：售后 Agent 桌面端
+   - 顶栏徽章：模型模式 · 可用 ｜ Node 22.22.2 ｜ 门禁 8/8
+   - 中栏期望条：六项期望全部符合（绿）
+   - 右栏轨迹第 1 行：会话头｜判定来源 offline_rule｜命名空间 aftersales｜
+                     首轮保守集 orders + refunds + logistics｜
+                     SOP 环节 accept → investigate → judge → approve → close
+   - 截图：docs/desktop-dashboard.png
+
+2) 切「模型判断」后重跑（DOM click 触发 change → 清缓存 → 重跑当前样本）
+   - 单选状态：current = model
+   - 期望条：六项期望全部符合（绿，模型模式下依然全过）
+   - 新轨迹文件生成，session_header.judge_mode = model
+   - ① 受理卡片 judge_source 徽章 = model
+   - 截图：docs/desktop-dashboard-model.png
+
+3) 冒烟中修掉的两个前端缺陷（均已复验）
+   a. 期望条条件写反：原来判 `r.expected`（样本的 expect 对象，恒为真），
+      导致每次样本回放都挂红条「与期望不符：」且内容为空 —— 实际六项全过。
+      改为判 `r.expect_errors.length`。
+   b. 轨迹首行渲染三个 undefined：JSONL 首行是 session_header，
+      字段集与后续行不同（无 seq/phase/summary），直接取值全是 undefined。
+      改为归一成一行可读摘要。
+   c. 样本回放硬编码 offline:true，「模型判断」单选对样本回放不生效。
+      改为读模式单选 + 缓存键带模式前缀 + 切模式清缓存重跑。
+
+────────────────────────────────────────────────────────────────────────────────
+五、截图
+────────────────────────────────────────────────────────────────────────────────
+改版前（三栏深色面板，已废弃）：
+  docs/desktop-dashboard.png        离线规则默认视图
+  docs/desktop-dashboard-model.png  切到模型判断后的视图
+
+改版后（Folio 式极简编辑风格，浅/深双模）：
+  docs/desktop-folio-light.png      全页 · 浅色
+  docs/desktop-folio-dark.png       全页 · 深色
+  docs/desktop-folio-stages.png     六环节区细节
+  docs/desktop-folio-gate.png       回归门禁弹层
+  docs/desktop-folio-ablation.png   消融对照弹层
+
+────────────────────────────────────────────────────────────────────────────────
+六、第二版改版复验（2026-10-14 深夜，Folio 式极简编辑风格）
+────────────────────────────────────────────────────────────────────────────────
+触发：Sun「这个桌面端是不是前端太简陋了 … 参考一下 folio 的前端 … 要简洁一点」。
+
+设计口径（参考 ThemeWagon Folio 的设计语言，未复制其代码）：
+  - 暖白画廊底 #f9f8f5 + 近黑墨色 #191817 + 单一陶土强调 #8a4b2a
+  - 发丝分隔线替代卡片边框；衬线大标题（Georgia / 宋体系统栈，不引外网字体）
+  - 章节编号 01–06；小号大写 letter-spaced 标签； generous 留白
+  - 三栏深色面板 → 左轨 + 单主栏（编辑式阅读宽度 860px）
+  - 整页收成一张居中 1360px 的「纸」，左右各一条发丝边线
+  - 新增浅/深主题切换，偏好落 localStorage
+  - 彩色徽章胶囊全部改成「小圆点 + 等宽字」，去掉视觉杂讯
+
+复验结果（真实 Chromium，逐项 eval 断言）：
+  样本列表           8 个                     ✓
+  环节卡片           6 个                     ✓
+  轨迹行             20 行                    ✓
+  期望条             「六项期望全部符合」       ✓
+  门禁徽章           「门禁 8/8」              ✓
+  模式徽章           「模型模式 · 可用」        ✓
+  主题切换           light → dark             ✓
+  样本点击           S03 → M03 标题正确        ✓
+  门禁弹层           8 行 + 汇总，无溢出        ✓
+  消融弹层           双栏对照 + 结论，无溢出    ✓
+
+改版中修掉的渲染缺陷：
+  1. 门禁弹层汇总行溢出：.badge 默认 white-space:nowrap，长文本
+     「合计 8 样本：全部符合期望 → 门禁放行（等价退出码 0）」冲出弹层右边界。
+     修：.gate-summary .badge { white-space: normal }。已用 getBoundingClientRect
+     断言 modalRight(1125) > summaryRight(1075)，overflow=false。
+  2. 消融弹层同源问题，一并复验通过（bodyRight 1090 < modalRight 1125）。
+

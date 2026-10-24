@@ -1,0 +1,241 @@
+==============================================================================
+craft-aftersales-agent 运行证据（2026-10-15 实测，全部 --offline 规则占位模式）
+Node v22.22.2｜零第三方依赖｜判据来源 judge_source=offline_rule
+==============================================================================
+
+■ 命令一：回归门禁  node src/cli.ts --gate --offline   （退出码 0）
+==============================================================================
+────────────────────────────────────────────────────────────────────────────────────────────────
+回归门禁：样本行为 vs 期望行为
+────────────────────────────────────────────────────────────────────────────────────────────────
+样本  等级      案件类型          复核裁决              授权    补证 执行 跟进 结果
+────────────────────────────────────────────────────────────────────────────────────────────────
+S01   GOLD      REFUND_ONLY       PASS                  ASK     ✓    ✓    -    ✓ 符合期望
+S02   BAD       LOGISTICS_INQUIRY REJECT_FACT_CONFLICT  AUTO    -    -    ✓    ✓ 符合期望
+S03   AMBIGUOUS REFUND_ONLY       WARN_AMBIGUOUS        APPROVE ✓    -    ✓    ✓ 符合期望
+S04   GOLD      REFUND_ONLY       PASS                  EXECUTE ✓    ✓    -    ✓ 符合期望
+S05   GOLD      LOGISTICS_INQUIRY PASS                  AUTO    -    -    -    ✓ 符合期望
+S06   GOLD      EXCHANGE          PASS                  ASK     ✓    ✓    -    ✓ 符合期望
+S07   BAD       REFUND_ONLY       REJECT_AMOUNT         AUTO    ✓    -    ✓    ✓ 符合期望
+S08   GOLD      UNCLEAR           CLARIFY_NEEDED        AUTO    -    -    ✓    ✓ 符合期望
+────────────────────────────────────────────────────────────────────────────────────────────────
+
+合计 8 样本（GOLD 5｜BAD 2｜AMBIGUOUS 1）：全部符合期望 → 门禁放行（退出码 0）
+
+
+■ 命令二：消融实验  node src/cli.ts --ablation --offline   （退出码 0）
+==============================================================================
+══════════════════════════════════════════════════════════════════════════════
+消融实验：只读 Reviewer 是不是流程装饰？
+对每个 BAD 样本跑两遍 —— 一遍带 Reviewer，一遍摘掉（--no-reviewer）。
+说明：摘掉 Reviewer 的这遍带 --auto-approve，让放行路径一路走到执行，对比才锐利。
+══════════════════════════════════════════════════════════════════════════════
+
+── S02 · M02 · 未收到货但物流已本人签收：事实冲突必须被拦下
+  带 Reviewer   → 裁决 REJECT_FACT_CONFLICT｜被复核门禁阻断（REJECT_FACT_CONFLICT），未进入授权执行
+  摘掉 Reviewer → 裁决 PASS（复核被跳过）｜无不可逆动作，按 SOP 直接结单
+
+── S07 · M07 · 申请退 500 但实付只有 268：金额口径超限必须被拦下
+  带 Reviewer   → 裁决 REJECT_AMOUNT｜被复核门禁阻断（REJECT_AMOUNT），未进入授权执行
+  摘掉 Reviewer → 裁决 PASS（复核被跳过）｜授权闸放行并执行 aftersales.decide_refund
+                 ↑ 本该拦住的案件被放行，执行了 aftersales.decide_refund
+
+══════════════════════════════════════════════════════════════════════════════
+对照结果：BAD 样本 2 个 —— 带 Reviewer 阻断 2/2，摘掉后只剩 0/2
+结论：只读 Reviewer 不是装饰。摘掉它，「执行前第二道强制闸」直接消失，
+      回归门禁对坏样本的约束力归零 —— 这正是它必须独立于取证与判责存在的原因。
+══════════════════════════════════════════════════════════════════════════════
+
+
+■ 命令三：负向验证  node src/cli.ts --case M08 --violation-demo --offline   （退出码 0）
+==============================================================================
+⚠ 负向验证模式：已绕过「诉求不明只追问」的保护，强行让案件闯过取证与判责。
+  预期结果：只读 Reviewer 以 REJECT_STAGE_VIOLATION（SR-01）硬阻断，授权闸不会放行。
+
+══════════════════════════════════════════════════════════════════════════════
+样本回放 M08｜GOLD｜诉求不明：只追问不猜，不进取证与判责
+══════════════════════════════════════════════════════════════════════════════
+  客户原话：反正你们这单有问题，你们自己看着处理吧。
+  [受理·理解] UNCLEAR｜情绪 angry｜订单 未解析出｜标记升级｜来源 offline_rule
+            依据：文本中没有任何可识别的诉求关键词，且没有订单线索，判定为诉求不明。
+  [受理·分类] 诉求不明（clarify 路径）｜要求证据 （无）｜资金动作 无
+  [判责]     NEED_MORE_INFO｜金额 0｜判据 1 条｜冲突 0｜模糊 0｜来源 offline_rule
+  [复核]     REJECT_STAGE_VIOLATION｜阶段违规：SR-01：诉求不明时不得进入取证与判责，必须先向客户追问澄清。（实际走过 investigate → judge）
+            [SR-01] CLARIFY_NEEDED：诉求无法归一，按 SOP 只追问澄清，未进入取证与判责；待客户补充信息后再走完整链路。
+            [SR-01] REJECT_STAGE_VIOLATION：诉求不明时不得进入取证与判责，必须先向客户追问澄清。
+  [审批]     未进入授权环节
+  [执行]     被复核门禁阻断（REJECT_STAGE_VIOLATION），未进入授权执行
+  [结单]     客户回执：您好，该笔售后暂无法自动处理，已转交专人跟进，请留意后续联系。
+            内部说明：被复核门禁阻断：REJECT_STAGE_VIOLATION。判据：诉求不明时不得进入取证与判责，必须先向客户追问澄清。需人工介入。
+            需人工跟进：是
+  [轨迹]     C:\Users\panda\WorkBuddy\2026-10-12-23-23-26\outputs\craft-aftersales-agent\runs\M08-2026-10-14T18-21-53-843Z.jsonl
+
+  期望比对：故意不符（负向验证的预期结果）→ 复核裁决 期望 CLARIFY_NEEDED / 实际 REJECT_STAGE_VIOLATION
+  解读：绕过 clarify 保护后，样本期望（CLARIFY_NEEDED）被违反，但只读 Reviewer 用
+  REJECT_STAGE_VIOLATION 把案件拦在了授权闸之前 —— 编排层犯错时，第二道闸仍然有效。
+
+
+■ 命令四：端到端演示  node src/cli.ts --demo --offline   （退出码 0）
+==============================================================================
+══════════════════════════════════════════════════════════════════════════════
+售后 Agent 端到端演示：客户的一句自然语言 → 受理 → 取证 → 判责 → 审批 → 结单
+运行方式：规则占位（--offline）｜ASK 档脚本自动确认｜只读 Reviewer 在位
+══════════════════════════════════════════════════════════════════════════════
+
+── S01 · M01 · GOLD · 色差仅退款：完整链路 + 补证 + ASK 档确认后执行 
+  客户原话：我8月8号买的那把椅子，颜色跟图片差太多了，我要退钱。
+  [受理·理解] REFUND_ONLY｜情绪 unhappy｜订单 O20260808-1107｜来源 offline_rule
+            槽位：日期线索=8月8日，订单号=O20260808-1107
+            依据：依据关键词命中判定为「仅退款」，并解析出订单线索。
+  [受理·分类] 仅退款（full 路径）｜要求证据 orders + refunds + sku_specs + logistics + tickets｜资金动作 aftersales.decide_refund
+  [取证]     实际取到：orders + refunds + logistics + sku_specs + tickets｜Reviewer 要求补证 1 轮（aftersales.query_sku_spec、aftersales.query_ticket）
+  [判责]     REFUND｜金额 389｜判据 4 条｜冲突 0｜模糊 0｜来源 offline_rule
+  [复核]     PASS
+  [审批]     ASK（执行前询问）｜金额 389｜资金类动作 aftersales.decide_refund，金额 389 落在「执行前询问」档（>100 且 ≤500）：执行前必须取得一次人工确认，且该确认只对本次参数有效。
+            回调结果：AUTO_EXECUTED｜审批人 human(脚本自动确认)｜APPROVED｜2026-10-14T18:21:55.281Z
+  [执行]     授权闸放行并执行 aftersales.decide_refund
+  [结单]     客户回执：您好，您的退款已处理完成，退款金额 389 元将按原支付路径退回，请注意查收。
+            内部说明：授权闸放行并执行 aftersales.decide_refund，金额 389。
+            需人工跟进：否
+  [轨迹]     C:\Users\panda\WorkBuddy\2026-10-12-23-23-26\outputs\craft-aftersales-agent\runs\M01-2026-10-14T18-21-55-257Z.jsonl
+
+── S02 · M02 · BAD · 未收到货但物流已本人签收：事实冲突必须被拦下 
+  客户原话：我8月9号买的桌子到现在都没收到，都一个多星期了，你们到底发没发货？
+  [受理·理解] LOGISTICS_INQUIRY｜情绪 angry｜订单 O20260809-2210｜来源 offline_rule
+            槽位：日期线索=8月9日，订单号=O20260809-2210
+            依据：依据关键词命中判定为「物流查询/催件」，并解析出订单线索。
+  [受理·分类] 物流查询/催件（light 路径）｜要求证据 orders + logistics｜资金动作 无
+  [取证]     实际取到：orders + logistics
+  [判责]     NEED_MORE_INFO｜金额 268｜判据 3 条｜冲突 1｜模糊 0｜来源 offline_rule
+            冲突：理由为「未收到货」，但物流显示已签收，事实冲突
+  [复核]     REJECT_FACT_CONFLICT
+            [CR-01] REJECT_FACT_CONFLICT：理由为「未收到货」但物流显示已签收，属事实冲突，需先澄清签收真实性再处置。
+  [审批]     未进入授权环节
+  [执行]     被复核门禁阻断（REJECT_FACT_CONFLICT），未进入授权执行
+  [结单]     客户回执：您好，您反馈的情况与系统记录存在出入（物流显示已签收），为避免误判，我们需要先与您核实签收情况，核实后立即处理。
+            内部说明：被复核门禁阻断：REJECT_FACT_CONFLICT。判据：理由为「未收到货」但物流显示已签收，属事实冲突，需先澄清签收真实性再处置。需人工介入。
+            需人工跟进：是
+  [轨迹]     C:\Users\panda\WorkBuddy\2026-10-12-23-23-26\outputs\craft-aftersales-agent\runs\M02-2026-10-14T18-21-55-285Z.jsonl
+
+── S03 · M03 · AMBIGUOUS · 破损 + 代收点签收：无确定性口径只告警；金额 1299 超阈值必须挂起等人工审批 
+  客户原话：桌子送到了，可是桌面有一道挺长的划痕，门卫代收的，我要投诉，要求全额退款。
+  [受理·理解] REFUND_ONLY｜情绪 angry｜订单 O20260810-3301｜标记升级｜来源 offline_rule
+            槽位：订单号=O20260810-3301
+            依据：依据关键词命中判定为「仅退款」，并解析出订单线索。
+  [受理·分类] 仅退款（full 路径）｜要求证据 orders + refunds + sku_specs + logistics + tickets｜资金动作 aftersales.decide_refund
+  [取证]     实际取到：orders + refunds + logistics + sku_specs + tickets｜Reviewer 要求补证 1 轮（aftersales.query_sku_spec、aftersales.query_ticket）
+  [判责]     REFUND｜金额 1299｜判据 4 条｜冲突 0｜模糊 1｜来源 offline_rule
+            模糊：签收人为代收点 / 门卫，属无确定性标准答案的业务策略型情形 → 仅告警，不阻断，也不得据此强判。
+  [复核]     WARN_AMBIGUOUS
+            [AM-01] WARN_AMBIGUOUS：签收人为代收点 / 门卫，属无确定性标准答案的业务策略型情形 → 仅告警，不阻断，也不得据此强判。
+  [审批]     APPROVE（升级人工审批）｜金额 1299｜资金类动作 aftersales.decide_refund，金额 1299 超过最高阈值，落在「升级人工审批」档：Agent 无权执行，必须挂起等待人工审批。
+            回调结果：PENDING_APPROVAL｜审批人 待指定审批人｜PENDING｜2026-10-14T18:21:55.323Z
+  [执行]     挂起等待人工审批（Agent 无权执行）
+  [结单]     客户回执：您好，您反馈的问题我们已记录并受理。此类签收情形需要专人核实责任归属，我们会在核实后第一时间回复您处理结果。
+            内部说明：责任归属无确定口径，仅告警不阻断。AM-01。授权档位 APPROVE（升级人工审批）｜PENDING_APPROVAL。
+            需人工跟进：是
+  [轨迹]     C:\Users\panda\WorkBuddy\2026-10-12-23-23-26\outputs\craft-aftersales-agent\runs\M03-2026-10-14T18-21-55-303Z.jsonl
+
+── S04 · M04 · GOLD · 物流延误赔付：金额 49.90 未超 100，EXECUTE 档直接执行 
+  客户原话：同城的箱子送了整整两天，页面上写的次日达，你们这不是骗人吗，赔我。
+  [受理·理解] REFUND_ONLY｜情绪 angry｜订单 O20260805-0912｜标记升级｜来源 offline_rule
+            槽位：订单号=O20260805-0912
+            依据：依据关键词命中判定为「仅退款」，并解析出订单线索。
+  [受理·分类] 仅退款（full 路径）｜要求证据 orders + refunds + sku_specs + logistics + tickets｜资金动作 aftersales.decide_refund
+  [取证]     实际取到：orders + refunds + logistics + sku_specs + tickets｜Reviewer 要求补证 1 轮（aftersales.query_sku_spec、aftersales.query_ticket）
+  [判责]     REFUND｜金额 49.9｜判据 4 条｜冲突 0｜模糊 0｜来源 offline_rule
+  [复核]     PASS
+  [审批]     EXECUTE（直接执行）｜金额 49.9｜资金类动作 aftersales.decide_refund，金额 49.9 未超过 100，落在「直接执行」档。
+            结果：AUTO_EXECUTED（无需人工介入）
+  [执行]     授权闸放行并执行 aftersales.decide_refund
+  [结单]     客户回执：您好，您的退款已处理完成，退款金额 49.9 元将按原支付路径退回，请注意查收。
+            内部说明：授权闸放行并执行 aftersales.decide_refund，金额 49.9。
+            需人工跟进：否
+  [轨迹]     C:\Users\panda\WorkBuddy\2026-10-12-23-23-26\outputs\craft-aftersales-agent\runs\M04-2026-10-14T18-21-55-325Z.jsonl
+
+── S05 · M05 · GOLD · 纯催件：light 路径，无资金动作，直接结单回执物流状态 
+  客户原话：我8月11号下的单，帮我看看到哪了，急着用。
+  [受理·理解] LOGISTICS_INQUIRY｜情绪 calm｜订单 O20260811-4402｜来源 offline_rule
+            槽位：日期线索=8月11日，订单号=O20260811-4402
+            依据：依据关键词命中判定为「物流查询/催件」，并解析出订单线索。
+  [受理·分类] 物流查询/催件（light 路径）｜要求证据 orders + logistics｜资金动作 无
+  [取证]     实际取到：orders + logistics
+  [判责]     INQUIRY｜金额 0｜判据 1 条｜冲突 0｜模糊 0｜来源 offline_rule
+  [复核]     PASS
+  [审批]     未进入授权环节
+  [执行]     无不可逆动作，按 SOP 直接结单
+  [结单]     客户回执：您好，已为您查到该订单的物流状态：包裹已到达派送站，仍在派送中，尚未签收。我们已同步联系站点优先处理，请您再耐心等待；如需进一步帮助请告诉我们。
+            内部说明：物流查询类咨询，未产生资金动作，按 SOP 结单。签收事实：未签收。
+            需人工跟进：否
+  [轨迹]     C:\Users\panda\WorkBuddy\2026-10-12-23-23-26\outputs\craft-aftersales-agent\runs\M05-2026-10-14T18-21-55-344Z.jsonl
+
+── S06 · M06 · GOLD · 换货：系统内无退款单，需自行判定新建换货工单；非资金不可逆动作走 ASK 档 
+  客户原话：椅子我要浅灰的，你们给我发了深灰，我不想退钱，给我换一件浅灰的行不行？
+  [受理·理解] EXCHANGE｜情绪 calm｜订单 O20260812-5503｜来源 offline_rule
+            槽位：订单号=O20260812-5503，目标规格=浅灰
+            依据：依据关键词命中判定为「换货」，并解析出订单线索。
+  [受理·分类] 换货（full 路径）｜要求证据 orders + sku_specs + logistics + tickets｜资金动作 aftersales.create_exchange｜需新建工单
+  [取证]     实际取到：orders + logistics + sku_specs + tickets｜Reviewer 要求补证 1 轮（aftersales.query_sku_spec、aftersales.query_ticket）
+  [判责]     EXCHANGE｜金额 0｜判据 1 条｜冲突 0｜模糊 0｜来源 offline_rule
+  [复核]     PASS
+  [审批]     ASK（执行前询问）｜金额 0｜非资金类但不可逆（换货建单、退货运单一旦生成，客户就要寄回），必须取得一次人工确认。
+            回调结果：AUTO_EXECUTED｜审批人 human(脚本自动确认)｜APPROVED｜2026-10-14T18:21:55.376Z
+  [执行]     授权闸放行并执行 aftersales.create_exchange
+  [结单]     客户回执：您好，换货工单已生成（单号 EX-02115377），我们会尽快为您寄出同款，退回商品请按后续短信指引寄回。
+            内部说明：换货工单 EX-02115377 已生成。
+            需人工跟进：否
+  [轨迹]     C:\Users\panda\WorkBuddy\2026-10-12-23-23-26\outputs\craft-aftersales-agent\runs\M06-2026-10-14T18-21-55-360Z.jsonl
+
+── S07 · M07 · BAD · 申请退 500 但实付只有 268：金额口径超限必须被拦下 
+  客户原话：那张餐桌我申请退500，你们看着办，赶紧退了。
+  [受理·理解] REFUND_ONLY｜情绪 angry｜订单 O20260813-6604｜标记升级｜来源 offline_rule
+            槽位：订单号=O20260813-6604，客户提及金额=500
+            依据：依据关键词命中判定为「仅退款」，并解析出订单线索。
+  [受理·分类] 仅退款（full 路径）｜要求证据 orders + refunds + sku_specs + logistics + tickets｜资金动作 aftersales.decide_refund
+  [取证]     实际取到：orders + refunds + logistics + sku_specs + tickets｜Reviewer 要求补证 1 轮（aftersales.query_sku_spec、aftersales.query_ticket）
+  [判责]     NEED_MORE_INFO｜金额 268｜判据 3 条｜冲突 1｜模糊 0｜来源 offline_rule
+            冲突：申请金额 500 超过可退上限 268
+  [复核]     REJECT_AMOUNT
+            [AR-01] REJECT_AMOUNT：退款金额不得超过实付金额与可退服务费之和。 实测 applied_amount=500 > 封顶 268。
+  [审批]     未进入授权环节
+  [执行]     被复核门禁阻断（REJECT_AMOUNT），未进入授权执行
+  [结单]     客户回执：您好，您申请的退款金额超出了该订单实付金额，我们只能按实付金额核算，已为您提交人工复核。
+            内部说明：被复核门禁阻断：REJECT_AMOUNT。判据：退款金额不得超过实付金额与可退服务费之和。 实测 applied_amount=500 > 封顶 268。需人工介入。
+            需人工跟进：是
+  [轨迹]     C:\Users\panda\WorkBuddy\2026-10-12-23-23-26\outputs\craft-aftersales-agent\runs\M07-2026-10-14T18-21-55-378Z.jsonl
+
+── S08 · M08 · GOLD · 诉求不明：只追问不猜，不进取证与判责 ────
+  客户原话：反正你们这单有问题，你们自己看着处理吧。
+  [受理·理解] UNCLEAR｜情绪 angry｜订单 未解析出｜标记升级｜来源 offline_rule
+            依据：文本中没有任何可识别的诉求关键词，且没有订单线索，判定为诉求不明。
+  [受理·分类] 诉求不明（clarify 路径）｜要求证据 （无）｜资金动作 无
+  [判责]     NEED_MORE_INFO｜金额 0｜判据 1 条｜冲突 0｜模糊 0｜来源 offline_rule
+  [复核]     CLARIFY_NEEDED
+            [SR-01] CLARIFY_NEEDED：诉求无法归一，按 SOP 只追问澄清，未进入取证与判责；待客户补充信息后再走完整链路。
+  [审批]     未进入授权环节
+  [执行]     诉求不明，按 SOP 未进入审批与执行
+  [结单]     客户回执：您好，为了尽快帮您处理，麻烦补充一下：这笔订单大致是哪天下单的、您希望的处理方式（退款 / 换货 / 仅催物流）？
+            内部说明：诉求不明，按 SOP 先追问澄清，未进入取证与判责。
+            需人工跟进：是
+  [轨迹]     C:\Users\panda\WorkBuddy\2026-10-12-23-23-26\outputs\craft-aftersales-agent\runs\M08-2026-10-14T18-21-55-398Z.jsonl
+
+══════════════════════════════════════════════════════════════════════════════
+演示汇总
+══════════════════════════════════════════════════════════════════════════════
+  S01  REFUND_ONLY       裁决 PASS                  授权 ASK     已执行 aftersales.decide_refund
+  S02  LOGISTICS_INQUIRY 裁决 REJECT_FACT_CONFLICT  授权 AUTO    未执行不可逆动作
+  S03  REFUND_ONLY       裁决 WARN_AMBIGUOUS        授权 APPROVE 未执行不可逆动作
+  S04  REFUND_ONLY       裁决 PASS                  授权 EXECUTE 已执行 aftersales.decide_refund
+  S05  LOGISTICS_INQUIRY 裁决 PASS                  授权 AUTO    未执行不可逆动作
+  S06  EXCHANGE          裁决 PASS                  授权 ASK     已执行 aftersales.create_exchange
+  S07  REFUND_ONLY       裁决 REJECT_AMOUNT         授权 AUTO    未执行不可逆动作
+  S08  UNCLEAR           裁决 CLARIFY_NEEDED        授权 AUTO    未执行不可逆动作
+
+  案件类型覆盖：REFUND_ONLY ×4｜LOGISTICS_INQUIRY ×2｜EXCHANGE ×1｜UNCLEAR ×1
+  SOP 另定义 RETURN_REFUND / COMPLAINT 两类，8 条样本未覆盖（见《交付说明》已知边界）。
+  决策轨迹已全部落盘：8 份 JSONL 见 runs/ 目录。
+
+
+==============================================================================
+runs/ 目录下 8 份决策轨迹 JSONL 即来自本次 --demo 运行（首行 session_header + 每行一事件）。
+==============================================================================

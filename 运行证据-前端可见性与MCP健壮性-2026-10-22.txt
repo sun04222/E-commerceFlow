@@ -1,0 +1,204 @@
+运行证据 · 前端可见性与 MCP 通道健壮性
+2026-10-22 · 本轮四处改动（4 个提交）
+
+说明：以下每一条都是本轮真跑出来的输出，不是「应该可以」。
+命令一律在项目根执行；浏览器断言的写法与原因见第 6 节（本轮踩到的两个坑）。
+
+
+════════════════════════════════════════════════════════════════════
+一、没跑通的那条不再被删掉（1d69399）
+════════════════════════════════════════════════════════════════════
+
+【改动前的问题】runQuery 的失败分支是 st.sessions.filter(x => x.id !== localId)：
+一条记录跑挂了，「刚才跑的是什么 / 为什么没成 / 还能不能再试」三件事一起消失，只剩一句 toast。
+另外 statusOf(result) 在 result 为 null 时只能返回「处理中」——
+一条永远好不了的记录会一直显示在跑。
+
+【改法】失败就地留下：会话加 error 字段（errOf 收成「原因 / 下一步 / 出口类型」），
+主区渲染失败卡（原因 + 下一步 + 原样重试），新增会话级状态 sessStatus() 单列「未跑通」一格，
+重试用 replaceId 顶掉原记录。
+
+【实测】只让 /api/run 失败（把 window.fetch 对 /api/run 换成 reject TypeError）：
+
+  failCard   : true
+  reason     : 连不上工作台服务
+  hint       : 服务进程可能已退出，或端口被别的程序占用。回到启动它的那个窗口看看，或重新运行启动脚本。
+  retry      : true（[data-retry-run] 存在）
+  cfgBtn     : false（net 类失败不给「去接口设置」，避免指错路）
+  failMetric : 1
+  qCount     : 1
+  chips      : ["未跑通"]
+  custText   : true（客户原话仍在）
+
+  截图：docs/err1-failcard.png
+
+【恢复通路后点重试】
+
+  failCard   : false
+  failMetric : 0
+  doneMetric : 1
+  qCount     : 1        ← 条数没变：同一条被顶掉，不是新增一条
+  chips      : ["已处理"]
+  banner     : ✓已自主完成处置 Agent 独立走完全流程并完成了处置，未打扰任何人。
+  控制台      : 0 行
+
+  截图：docs/err2-retried.png
+
+【窄屏（900×800）】指标条在 ≤900px 是藏起来的，右栏抽屉是唯一入口，
+所以右栏「现在能做的」在未跑通 > 0 时多一条入口（24cc44d）：
+
+  w          : 900
+  failCard   : true
+  drawerOpen : true
+  sactFail   : 看没跑通的那几条1 条
+  overflowX  : false
+
+  截图：docs/err3-narrow.png
+
+
+════════════════════════════════════════════════════════════════════
+二、MCP 客户端：子进程一死就当场作废（b9a27b4）
+════════════════════════════════════════════════════════════════════
+
+【改动前的 7 处隐患】
+  1. child 没有 exit / error 处理 → 子进程挂了 mcpState.ready 仍是 true（假在线）
+  2. 每次拉数都要挂满 8 秒超时才失败，且没人知道为什么
+  3. send 的 setTimeout 没 unref（一个没回音的请求能拖住进程退出）
+  4. notify 直接 child.stdin.write，进程已死时抛 EPIPE 没人接
+  5. 超时后不 cancel 请求（对方还在算，响应回来无人认领被丢掉）
+  6. 工具级失败藏在 isError 里，客户端只认 JSON-RPC error → 报错变成 JSON.parse 语法错
+  7. 无重连、无退避、退出时不留子进程处理（每次 Ctrl+C 留一个孤儿 node 占管道）
+
+【正常态】GET /api/connectors 的 mcp 字段：
+
+  ready: true ｜ tools: 9 个 ｜ attempts: 1 ｜ handshakeMs: 267 ｜ timeoutMs: 10000
+
+  POST /api/connectors/pull {"id":"*"}：
+  orders-hub    via=mcp added=4
+  aftersales-hub via=mcp added=4
+  logistics-hub via=mcp added=4
+  catalog-hub   via=mcp added=3
+
+  截图：docs/mcp1-channel.png
+
+【杀子进程 + 移走 mcp/server.mjs 之后】—— 两条实测，看的是同一件事：状态立刻作废
+
+  (a) 只杀进程：
+      ready   : false
+      problem : MCP 子进程被强制结束
+      tools   : 0
+      （改动前这里会是 ready=true，界面照旧显示「已联通」）
+
+  (b) 杀进程 + 移走文件后拉取：
+      via   : file
+      note  : MCP 通道未就绪：MCP 子进程退出（退出码 1）：Cannot find module
+              '...\mcp\server.mjs'。数据已改从本地文件通路读取。
+      added : 0 ｜ updated : 4      ← 按主键 upsert，幂等，不重复堆行
+      mcp.ready : false             ← 不能一边报错一边标「已联通」
+
+  截图：docs/mcp2-down.png
+
+【恢复文件后点「重连」】
+
+  POST /api/mcp/reconnect → connected: true ｜ tools: 9 ｜ attempts: 3 ｜ handshakeMs: 231
+  面板 chip：联通 ｜ 在线工具：9 个 ｜ toast：数据通道已接通：9 个工具在线
+  另有一次实测：尝试连接 6 次 → 7 次（证明重连真的重走了握手，不是把旧状态刷一遍）
+
+  截图：docs/mcp3-reconnected.png
+
+【超时路径（MCP_HANDSHAKE_TIMEOUT=1 启动）】
+  三处口径必须一致，且不能被我们自己 kill 出来的 EPIPE 盖掉（本轮踩过，已修）：
+
+  /api/connectors 的 problem : MCP 调用超时（1 毫秒）：initialize
+  拉取回执的 via_note        : MCP 通道未就绪：MCP 调用超时（1 毫秒）：initialize。数据已改从本地文件通路读取。
+  /api/mcp/reconnect         : connected=false ｜ problem 同上
+
+
+════════════════════════════════════════════════════════════════════
+三、单文件版：没有进程可拉就别摆「重连」（eb1e5aa）
+════════════════════════════════════════════════════════════════════
+
+第二实现的老问题：桌面版有进程可重连，单文件版没有 —— 不显式声明，界面就会摆一个点了必然失败的按钮。
+
+  demo.html#sources 实测：
+    presets       : 8
+    panel         : true
+    chip          : 未联通
+    problem       : 单文件演示模式不能拉起独立进程；取数走本地数据文件通路（同一份数据、同一处校验）
+    reconnectBtn  : false          ← 按钮不存在
+    staticHint    : 单文件版没有可重连的进程
+    连接方式       : MCP · 本形态无进程，走文件通路
+    尝试连接       : 这一形态不适用
+    控制台         : 0 行
+
+  桌面版对照：chip=联通 ｜ reconnect=true ｜ 连接方式=MCP · 本地进程通道
+
+  截图：docs/mcp6-demo.png
+
+  另：引擎垫片补了 /api/mcp/reconnect 的明确拒绝（界面不摆，接口也不沉默）：
+  「单文件演示模式没有独立进程可连，无法重连数据通道；取数请直接用本地文件通路」
+
+
+════════════════════════════════════════════════════════════════════
+四、样式一致性与响应式（含在 b9a27b4 / 24cc44d）
+════════════════════════════════════════════════════════════════════
+
+内联 style：28 处 → 3 处。剩下的 3 处是「本来就该动态」的：
+  · 骨架条宽度 width:74%-7i%（数据驱动）
+  · 两个角标的 display:none（JS 直接改 style.display，与初始态同一处）
+
+其余收敛成「一个类一个用途」的工具类（.grow / .mt-10 / .note-plain / .banner.flush /
+.intro.wide / .chip-btn …），集中放在样式表末尾一段，改设计只动那一处。
+
+响应式实测（set viewport 后断言，不靠肉眼）：
+  1264 : side=flex  queue=flex  chanCols=2 列  overflowX=false
+   900 : side=none  queue=none  chanCols=2 列  overflowX=false   ← 两栏都变抽屉
+
+  截图：docs/mcp5-900.png（900×800 数据源页）
+
+
+════════════════════════════════════════════════════════════════════
+五、回归（每次提交前都跑）
+════════════════════════════════════════════════════════════════════
+
+  --gate --offline          ：8 样本全部符合期望 → 门禁放行（退出码 0）
+  --demo  --offline         ：退出码 0
+  build-demo.mjs            ：18 模块 / 11 数据文件 / sha256 自校验通过 / 无模块语法残留
+  四视图（首屏 / 审批 / 数据源 / 接口设置）：关键元素齐全，控制台 0 行
+  术语卫哨（.tmp/guard.js，50 项禁止词）：首屏 / 失败卡 / 数据源 / 单文件版 各扫一次，均 0 命中
+
+  四视图断言原文：
+    首屏      : {"presets":8,"board":true,"metrics":8,"failMetric":true,"engine":"智能模型判定"}
+    人工审批   : {"intro":true,"h1":"人工审批"}
+    数据源    : {"chanPanel":true,"srcCards":6,"impPanel":true,"wxPanel":true}
+    接口设置   : {"cfgState":true,"keyHint":true,"save":true,"test":true,"note":true}
+
+
+════════════════════════════════════════════════════════════════════
+六、本轮踩到并记下的两个工具坑（不影响产品，但影响验收可信度）
+════════════════════════════════════════════════════════════════════
+
+1. agent-browser 的 eval 参数里不能出现 `?`。
+   它会把参数当 URL 查询串解析，整个脚本静默失败（退出码 1、无输出）。
+   所以所有三元表达式都写成 if/else；或者干脆用 `agent-browser eval --stdin` 走 heredoc。
+
+2. `agent-browser set viewport` 必须在 `open` 之后调。
+   先设视口再 open，open 会把视口重置回默认（实测设 900 后 innerWidth 仍是 1264）；
+   正确顺序是 open → set viewport → 断言 → 截图，且这些要在同一次 Bash 调用里完成
+   （eval 会随机落到 about:blank，这是老问题）。
+
+
+════════════════════════════════════════════════════════════════════
+七、如实说明：本轮没做的事
+════════════════════════════════════════════════════════════════════
+
+1. /api/gate 仍然没有界面入口。它是回归门禁，离线模式 8 条约 1 秒，
+   但模型模式每条 20–30 秒（8 条要 3 分钟以上），要放进界面得先有「后台任务 + 进度」
+   这一层，不是加个按钮的事。本轮不做，理由写在这里，不假装做了。
+
+2. 连接器声明里的 get 类工具（orders_get / refunds_get / logistics_get / sku_get）
+   仍然只被 tools/list 列出、没有任何调用点 —— 界面只做整表拉取。
+   这不是 bug（拉取只走 list 类工具，参数是空的也没问题），但是一条「声明了却没接上」的缺口。
+
+3. 无障碍（aria-* / focus-visible / 键盘路径）本轮没动，与上一轮同样的理由：
+   这一层要么系统性重做，要么零散做几处反而给人「已经支持无障碍」的错觉。

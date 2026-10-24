@@ -1,0 +1,97 @@
+运行证据 · 使用者前端改版（2026-10-15）
+================================================================
+
+背景
+----------------------------------------------------------------
+Sun 指出前端混入大量工程描述（src/gate.ts、--gate、offline_rule、
+aftersales.decide_refund、GOLD/BAD/AMBIGUOUS、退出码），要求：
+「参考一下别的github电商agent相关项目学习一下然后重新做一版出来，
+  我要可以直接展示而且不需要你把工程的东西全部写进去，
+  我要的是面对使用者的一个前端」。
+
+研究（三个真实 GitHub 项目）
+----------------------------------------------------------------
+1. Diudiu-AI-product/ai-customer-service-workbench（AI 智能客服协同工作台）
+   - 主张：「把 AI 放进真实的客服工作流里，而不是做成单独的聊天机器人」
+   - 对话中心 = 多会话队列 + 当前会话详情 + 建议回复 + 人工接管/升级动作
+   - 回复建议是「可采纳、编辑、拒绝」的 Copilot，不是自动发送
+   - 右栏按会话类型动态切换上下文面板
+2. 8002-zyh/ai-ecommerce-agent-platform（B2B 电商运营平台）
+   - 使用者看到的是：回复草稿、引用来源、风险标记、人工审批、处理记录
+3. thiagonatandev/openai-ecommerce-agents（OpenAI 官方 demo 衍生）
+   - 对话式 + guardrails 可视化 + 多 agent 分工
+
+共识结论：面向使用者的电商 agent 前端 = 客服工作台（会话队列 / 对话流 /
+AI 建议面板），术语全部业务化；工程细节（trace/eval/工具注册表）不进前端。
+
+改版形态：售后 Agent · 客服工作台
+----------------------------------------------------------------
+三栏布局：
+- 图标轨（深色）：主题切换、建议面板收合
+- 会话队列：统计（已处理/待人工审批/已拦截/待补充信息）+ 8 个演示会话
+  （业务名 + 客户原话摘要 + 状态徽章）+ 演示设置（判定方式/自动确认/
+  关闭合规复核）
+- 对话流：客户原话气泡 + Agent 回复气泡 + 六步处理进度条
+  （理解需求→核实订单→拟定方案→合规复核→审批确认→回复客户，
+   完成/未通过/未进入三态）+ 底部输入框（粘贴客户原话，回车处理）
+- 处理建议：状态横幅（已处理·建议退款 ¥389.00 / 待人工审批 / 已拦截 /
+  待补充信息）+ 处理结论 + 核实依据 + 合规复核 + 审批 + 建议回复（可复制）
+
+术语映射（内部枚举 → 使用者语言）：
+  PASS→复核通过；REJECT_FACT_CONFLICT→未通过：信息与记录不符；
+  REJECT_AMOUNT→未通过：退款金额超出实付；CLARIFY_NEEDED→需补充信息；
+  WARN_AMBIGUOUS→基本通过，有不确定项
+  EXECUTE→已自动处理；ASK→已确认后处理；APPROVE→待人工审批；AUTO→无需审批
+  full→完整核查；light→快速处理；clarify→待澄清
+  orders/refunds/sku_specs/logistics/tickets→订单/退款单/商品规格/物流/工单记录
+
+数据改动
+----------------------------------------------------------------
+- samples/cases.json：每个样本增加 display 字段（业务名，additive，
+  gate 只读 expect，不受影响）
+- /api/bootstrap：samples 增加 display 透传（server.mjs 与
+  build-demo.mjs 引擎适配层同步）
+
+工程术语卫哨（本次新增的验收手段）
+----------------------------------------------------------------
+渲染文本净化函数 sanitize()：所有自由文本（rationale/findings/
+conflicts/auth.because/execution_outcome/internal_note/reply）渲染前
+必须过一层替换——aftersales.* 工具名→人话，APPROVE/PENDING_APPROVAL/
+REJECT_* 等枚举→中文，规则编号（AM-01/SR-01）剥离。
+用真实 Chromium 逐会话扫描 .app innerText，禁止词表 38 项
+（src/、.ts、cli、--、offline_rule、aftersales.、GOLD、BAD、AMBIGUOUS、
+退出码、judge、trace、JSONL、S0、M0、gate、ablation、Reviewer、requery、
+expect、.mjs、.env、REFUND、PASS、EXECUTE、ASK、APPROVE、AUTO、WARN、
+REJECT、CLARIFY、INQUIRY、sop、slots、msg_id、namespace、AM-、SR-、
+PENDING、APPROVED、NEED_MORE）。
+
+实测结果（真实 Chromium + file://，全过）
+----------------------------------------------------------------
+1. 启动：引擎挂载、8 个演示会话、默认打开首个会话（色差仅退款）、
+   客户/Agent 双气泡、六步进度条、建议面板 5 卡
+2. 术语卫哨：8 个演示会话逐个扫描 + 一次临时咨询（无匹配订单 →
+   凭证缺失被拦），全部 clean（38 项禁止词零命中）
+   - 修复记录：首轮卫哨抓到 2 处泄漏——auth.because 正文含
+     aftersales.decide_refund、approval_decision=APPROVED、
+     execution_outcome 含 REJECT_FACT_CONFLICT，均由 sanitize 收口
+3. 状态机抽查：
+   - S02 已拦截：横幅「已拦截 · 该请求未通过合规复核，未执行任何处置动作」；
+     进度条合规复核 ✕ 未通过：信息与记录不符，审批确认未进入
+   - S03 待人工审批：横幅「待人工审批 · 建议退款 ¥1299.00」
+   - S08 待补充信息：核实订单/拟定方案/审批确认三步未进入
+   - 临时咨询（换货 + 无匹配订单）：已拦截，回复「已转交专人跟进」
+4. 复制回复按钮：存在且复制净化后文本
+5. 深色主题：整壳切换正常
+6. Node 服务端版：正常供新版页面（按请求读盘，无需重启）
+
+截图清单（docs/）
+----------------------------------------------------------------
+cs-workbench-main.png       主视图（色差仅退款 · 已处理）
+cs-workbench-blocked.png    已拦截（未收到货但物流已签收）
+cs-workbench-approval.png   待人工审批（破损 + 代收点签收 ¥1299）
+cs-workbench-clarify.png    待补充信息（诉求不明）
+cs-workbench-newask.png     临时咨询（换货 · 无匹配订单被拦）
+cs-workbench-dark.png       深色主题
+
+构建：node scripts/build-demo.mjs → demo.html 151.9 KB
+（15 模块 / 10 数据文件 / sha256 自校验通过 / 无模块语法残留）

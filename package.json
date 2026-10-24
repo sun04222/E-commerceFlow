@@ -1,0 +1,19 @@
+{
+  "name": "craft-aftersales-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "电商售后处置 Agent 演示工程 —— 严格对齐简历四要点，覆盖咨询理解 / 问题分类 / 工单处理 / 结果反馈四链路",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "demo": "node src/cli.ts --demo --offline",
+    "demo:model": "node src/cli.ts --demo",
+    "ask": "node src/cli.ts --ask",
+    "case": "node src/cli.ts --case",
+    "gate": "node src/cli.ts --gate --offline",
+    "all": "node src/cli.ts --all --offline",
+    "ablation": "node src/cli.ts --ablation --offline"
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "_file": "sop.json",
+  "_notice": "合成 SOP · 非任何真实平台流程 · 仅用于本项目演示与回归门禁",
+  "_why": "这是本项目「领域契约」的实体：一笔售后咨询从受理到结单必须经过哪五个环节，以及不同诉求类型各自要求哪一类证据、走哪条处置路径。它同时是只读 Reviewer 判定「流程是否合规」的依据。",
+  "stages": [
+    {
+      "id": "accept",
+      "name": "受理",
+      "entry": "收到客户咨询，识别真实诉求与订单线索；诉求不明时先追问，不猜。",
+      "exit": "产出受理结论：诉求类型 + 订单线索 + 是否需立即升级"
+    },
+    {
+      "id": "investigate",
+      "name": "取证",
+      "entry": "按诉求类型确定取证范围，跨五源取数。",
+      "exit": "取得该类型要求的全部来源；缺项由只读 Reviewer 驳回并要求补证"
+    },
+    {
+      "id": "judge",
+      "name": "判责",
+      "entry": "基于证据与规则归纳判据，给出处置建议。",
+      "exit": "产出带判据的处置建议；无判据不得出结论"
+    },
+    {
+      "id": "approve",
+      "name": "审批",
+      "entry": "处置建议进入授权闸，按操作类型与金额参数分档。",
+      "exit": "要么取得授权并执行，要么挂起等待人工，全程留痕"
+    },
+    {
+      "id": "close",
+      "name": "结单",
+      "entry": "执行结果回执客户，工单归档，轨迹闭合。",
+      "exit": "客户已收到可读回执；轨迹可完整回放"
+    }
+  ],
+
+  "case_types": [
+    {
+      "code": "REFUND_ONLY",
+      "name": "仅退款",
+      "trigger_intents": ["退款", "退钱", "赔付", "赔偿", "退差价"],
+      "requires_return": false,
+      "money_action": "aftersales.decide_refund",
+      "required_sources": ["orders", "refunds", "sku_specs", "logistics", "tickets"],
+      "sop_path": "full"
+    },
+    {
+      "code": "RETURN_REFUND",
+      "name": "退货退款",
+      "trigger_intents": ["退货退款"],
+      "requires_return": true,
+      "money_action": "aftersales.decide_refund",
+      "required_sources": ["orders", "refunds", "sku_specs", "logistics", "tickets"],
+      "sop_path": "full"
+    },
+    {
+      "code": "EXCHANGE",
+      "name": "换货",
+      "trigger_intents": ["换货", "换一件"],
+      "requires_return": true,
+      "money_action": "aftersales.create_exchange",
+      "required_sources": ["orders", "sku_specs", "logistics", "tickets"],
+      "sop_path": "full"
+    },
+    {
+      "code": "LOGISTICS_INQUIRY",
+      "name": "物流查询/催件",
+      "trigger_intents": ["催物流", "查询物流", "到哪了"],
+      "requires_return": false,
+      "money_action": null,
+      "required_sources": ["orders", "logistics"],
+      "sop_path": "light"
+    },
+    {
+      "code": "COMPLAINT",
+      "name": "投诉",
+      "trigger_intents": ["投诉"],
+      "requires_return": false,
+      "money_action": null,
+      "required_sources": ["orders", "tickets"],
+      "sop_path": "light"
+    },
+    {
+      "code": "UNCLEAR",
+      "name": "诉求不明",
+      "trigger_intents": [],
+      "requires_return": false,
+      "money_action": null,
+      "required_sources": [],
+      "sop_path": "clarify"
+    }
+  ]
+}
